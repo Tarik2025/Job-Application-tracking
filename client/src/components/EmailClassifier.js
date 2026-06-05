@@ -13,8 +13,12 @@ export default function EmailClassifier({ onClassified }) {
   const [emails, setEmails] = useState([]);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
+  const [receivedDate, setReceivedDate] = useState('');
   const [classifyResult, setClassifyResult] = useState(null);
+  const [classifyEmailId, setClassifyEmailId] = useState(null);
   const [classifying, setClassifying] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [confirmMsg, setConfirmMsg] = useState('');
 
   useEffect(() => { loadAccounts(); loadEmails(); }, []);
 
@@ -41,11 +45,36 @@ export default function EmailClassifier({ onClassified }) {
     finally { setFetching(false); }
   };
 
+  const handleConfirmAdd = async () => {
+    if (!classifyResult?.company) return;
+    setConfirming(true);
+    try {
+      const res = await api.confirmClassification({
+        company: classifyResult.company,
+        role: classifyResult.role || 'Unknown Role',
+        status: classifyResult.suggested_status || 'applied',
+        received_date: receivedDate || undefined,
+        email_id: classifyEmailId
+      });
+      if (res.action === 'created') setConfirmMsg(`✓ Added "${classifyResult.company}" to applications`);
+      else if (res.action === 'updated') setConfirmMsg(`✓ Updated "${classifyResult.company}" status to ${classifyResult.suggested_status}`);
+      else if (res.action === 'exists') setConfirmMsg(`ℹ "${classifyResult.company}" already exists with same status`);
+      onClassified();
+    } catch (err) { setConfirmMsg(`✕ ${err.message}`); }
+    finally { setConfirming(false); }
+  };
+
   const handleClassify = async (e) => {
     e.preventDefault();
     if (!body.trim()) return;
     setClassifying(true);
-    try { const data = await api.classifyEmail({ subject, body }); setClassifyResult(data.classification); loadEmails(); onClassified(); }
+    try {
+      const data = await api.classifyEmail({ subject, body, received_date: receivedDate || undefined });
+      setClassifyResult(data.classification);
+      setClassifyEmailId(data.id);
+      setConfirmMsg('');
+      loadEmails();
+    }
     catch (err) { setClassifyResult({ error: err.message }); }
     finally { setClassifying(false); }
   };
@@ -170,6 +199,7 @@ export default function EmailClassifier({ onClassified }) {
               <h2 className="font-semibold text-lg mb-4">📋 Paste Email</h2>
               <form onSubmit={handleClassify} className="space-y-4">
                 <InputField label="Subject" placeholder="Email subject (optional)" value={subject} onChange={e => setSubject(e.target.value)} />
+                <InputField label="Email Received Date" type="date" value={receivedDate} onChange={e => setReceivedDate(e.target.value)} />
                 <div>
                   <label className="text-xs font-medium text-[var(--text-secondary)] ml-1 block mb-1.5">Email Body</label>
                   <textarea className="input-field min-h-[180px]" placeholder="Paste email content..." value={body} onChange={e => setBody(e.target.value)} required />
@@ -186,12 +216,25 @@ export default function EmailClassifier({ onClassified }) {
                 classifyResult.error ? <p className="text-[var(--danger)]">{classifyResult.error}</p> : (
                   <div className="space-y-3">
                     <div className="flex justify-between"><span className="text-[var(--text-secondary)] text-sm">Type</span><span className="badge bg-[var(--primary)]/10 text-[var(--primary)]">{classifyResult.classification}</span></div>
-                    <div className="flex justify-between"><span className="text-[var(--text-secondary)] text-sm">Company</span><span className="font-medium text-sm">{classifyResult.company || '—'}</span></div>
+                    <div className="flex justify-between"><span className="text-[var(--text-secondary)] text-sm">Company</span><span className="font-medium text-sm">{classifyResult.company || '—'}{classifyResult.company_domain && <span className="text-xs text-[var(--text-secondary)] ml-1">({classifyResult.company_domain})</span>}</span></div>
                     <div className="flex justify-between"><span className="text-[var(--text-secondary)] text-sm">Role</span><span className="font-medium text-sm">{classifyResult.role || '—'}</span></div>
                     <div className="flex justify-between"><span className="text-[var(--text-secondary)] text-sm">Status</span><span className="font-medium text-sm capitalize">{classifyResult.suggested_status || '—'}</span></div>
-                    <div className="flex justify-between"><span className="text-[var(--text-secondary)] text-sm">Date</span><span className="font-medium text-sm">{classifyResult.date || new Date().toLocaleDateString()}</span></div>
+                    <div className="flex justify-between"><span className="text-[var(--text-secondary)] text-sm">Date</span><span className="font-medium text-sm">{receivedDate || new Date().toLocaleDateString()}</span></div>
                     <div className="flex justify-between"><span className="text-[var(--text-secondary)] text-sm">Confidence</span><span className="font-medium text-sm">{Math.round((classifyResult.confidence || 0) * 100)}%</span></div>
                     <div className="p-3 rounded-xl bg-[var(--bg-secondary)] text-sm">{classifyResult.summary}</div>
+
+                    {/* Confirm Add Button */}
+                    {classifyResult.company && (
+                      <div className="pt-3 border-t border-[var(--border)]">
+                        {confirmMsg ? (
+                          <p className={`text-sm font-medium ${confirmMsg.startsWith('✕') ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>{confirmMsg}</p>
+                        ) : (
+                          <Button variant="primary" className="w-full" onClick={handleConfirmAdd} loading={confirming}>
+                            ✓ Add to Applications
+                          </Button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )
               ) : (

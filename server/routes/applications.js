@@ -31,7 +31,9 @@ router.get('/', (req, res) => {
 
   // Enrich with days_since, tags
   rows = rows.map(r => {
-    const days_since = Math.floor((Date.now() - new Date(r.applied_date).getTime()) / 86400000);
+    const today = new Date(); today.setHours(0,0,0,0);
+    const applied = new Date(r.applied_date); applied.setHours(0,0,0,0);
+    const days_since = Math.round((today - applied) / 86400000);
     const tags = db.prepare('SELECT t.name,t.color FROM application_tags at2 JOIN tags t ON at2.tag_id=t.id WHERE at2.application_id=?').all(r.id);
     return { ...r, days_since, tags };
   });
@@ -48,7 +50,9 @@ router.get('/:id', (req, res) => {
   const app = db.prepare('SELECT * FROM applications WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!app) return res.status(404).json({ error: 'Not found' });
 
-  const days_since = Math.floor((Date.now() - new Date(app.applied_date).getTime()) / 86400000);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const applied = new Date(app.applied_date); applied.setHours(0,0,0,0);
+  const days_since = Math.round((today - applied) / 86400000);
   const tags = db.prepare('SELECT t.id,t.name,t.color FROM application_tags at2 JOIN tags t ON at2.tag_id=t.id WHERE at2.application_id=?').all(app.id);
   const history = db.prepare('SELECT * FROM status_history WHERE application_id=? ORDER BY created_at DESC').all(app.id);
   const notes = db.prepare('SELECT * FROM notes_history WHERE application_id=? ORDER BY created_at DESC').all(app.id);

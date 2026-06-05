@@ -181,10 +181,12 @@ export function classifyManual(body, subject = '') {
   // Extract company
   let company = null;
   const companyPatterns = [
-    /([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?)\s+(?:Recruitment|HR|Hiring|Talent|Team)/,
+    /(?:interest in|considering|applying to|application (?:to|for|at))\s+(?:the\s+)?([A-Z][A-Za-z]+)/,
+    /([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?)\s+(?:Recruitment|HR|Hiring|Talent|Team|Careers|Apprenticeship|Program)/,
     /(?:at|from|with|to)\s+([A-Z][A-Za-z\s&.]{2,25})(?:\.|\s+(?:is|has|we|team|pvt|ltd|inc))/,
     /(?:team at|hiring at|position at|application to|interest in joining)\s+([A-Z][A-Za-z\s&.]{2,25})/,
     /(?:interest in joining)\s+(?:our|the)?\s*(?:team at)?\s*([A-Z][A-Za-z]+)/,
+    /(?:the\s+)?([A-Z][A-Za-z]+)\s+(?:Careers?|Jobs?)\s+(?:webpage|page|site|portal)/,
   ];
   for (const p of companyPatterns) {
     const m = `${subject} ${body}`.match(p);
@@ -194,9 +196,11 @@ export function classifyManual(body, subject = '') {
   // Extract role
   let role = null;
   const rolePatterns = [
+    /(?:application for|applied for|interest in)\s+(?:the\s+)?([A-Za-z\s/()\-]+?)(?:\.|,|\n|We|will|and)/i,
     /(?:for|position|role|opening|job)\s*(?:of|for|:|-)\s*([A-Za-z\s/()\-]+?)(?:\.|,|\n|We|will)/i,
-    /(?:Intern|Internship)\s*[-–:]\s*([A-Za-z\s/()]+?)(?:\.|,|\n|We|will)/i,
+    /(?:Intern|Internship|Apprentice|Apprenticeship)\s*[-–:]?\s*([A-Za-z\s/()]+?)(?:\.|,|\n|We|will)/i,
     /((?:Intern|Senior|Junior|Lead|Staff|Principal)?\s*[-–]?\s*(?:Software|Frontend|Backend|Full[- ]?Stack|Data|DevOps|Cloud|Mobile|ML|AI|QA|Product|Developer|Marketing|Design|HR|Sales|Business|Technical|Research)\s*(?:Engineer|Developer|Analyst|Scientist|Manager|Designer|Architect|Relations|Evangelist|Advocate|Intern)?)/i,
+    /([A-Za-z]+\s+(?:Apprenticeship|Fellowship|Residency)\s*(?:Program)?)/i,
     /(?:position|role|opening|job)\s*(?:of|for|:|-)\s*([A-Za-z\s/()]+?)(?:\.|,|\n|at)/i,
   ];
   for (const p of rolePatterns) {

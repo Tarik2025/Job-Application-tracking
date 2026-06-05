@@ -15,33 +15,65 @@ router.get('/', (req, res) => {
 // Manual classify
 router.post('/classify', async (req, res) => {
   try {
-    const { subject, body } = req.body;
+    const { subject, body, received_date } = req.body;
     if (!body) return res.status(400).json({ error: 'Email body required' });
 
     const classification = await classifyEmail(body, subject);
+
+    // Verify company name using Clearbit free API
+    if (classification.company) {
+      try {
+        const cbRes = await fetch(`https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(classification.company)}`);
+        if (cbRes.ok) {
+          const suggestions = await cbRes.json();
+          if (suggestions.length > 0) {
+            classification.company = suggestions[0].name;
+            classification.company_domain = suggestions[0].domain;
+            classification.company_logo = suggestions[0].logo;
+          }
+        }
+      } catch {}
+    }
+
+    classification.received_date = received_date || null;
+    const r = db.prepare('INSERT INTO emails (user_id,application_id,subject,body,classification,extracted_data) VALUES (?,?,?,?,?,?)').run(req.user.id, null, subject||null, body, classification.classification, JSON.stringify(classification));
+    res.json({ id: r.lastInsertRowid, classification, applicationId: null, action: null });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Confirm and add to applications after classification
+router.post('/classify/confirm', async (req, res) => {
+  try {
+    const { company, role, status, received_date, email_id } = req.body;
+    if (!company) return res.status(400).json({ error: 'Company required' });
+
+    const appliedDate = received_date || new Date().toISOString();
     let applicationId = null;
     let action = null;
 
-    if (classification.company) {
-      const app = db.prepare('SELECT id, status FROM applications WHERE user_id = ? AND company LIKE ? ORDER BY applied_date DESC LIMIT 1').get(req.user.id, `%${classification.company}%`);
-      if (app) {
-        applicationId = app.id;
-        if (classification.suggested_status && classification.suggested_status !== app.status) {
-          db.prepare('UPDATE applications SET status=?, last_updated=CURRENT_TIMESTAMP WHERE id=?').run(classification.suggested_status, app.id);
-          db.prepare('INSERT INTO status_history (application_id, user_id, from_status, to_status, note) VALUES (?,?,?,?,?)').run(app.id, req.user.id, app.status, classification.suggested_status, `Auto-updated from email: ${subject || 'No subject'}`);
-          action = 'updated';
-        }
+    const app = db.prepare('SELECT id, status FROM applications WHERE user_id = ? AND company LIKE ? ORDER BY applied_date DESC LIMIT 1').get(req.user.id, `%${company}%`);
+    if (app) {
+      applicationId = app.id;
+      if (status && status !== app.status) {
+        db.prepare('UPDATE applications SET status=?, last_updated=CURRENT_TIMESTAMP WHERE id=?').run(status, app.id);
+        db.prepare('INSERT INTO status_history (application_id, user_id, from_status, to_status, note) VALUES (?,?,?,?,?)').run(app.id, req.user.id, app.status, status, 'Updated from email classification');
+        action = 'updated';
       } else {
-        const role = classification.role || 'Unknown Role';
-        const newApp = db.prepare('INSERT INTO applications (user_id, company, role, status, platform) VALUES (?, ?, ?, ?, ?)').run(req.user.id, classification.company, role, classification.suggested_status || 'applied', 'Email');
-        applicationId = newApp.lastInsertRowid;
-        db.prepare('INSERT INTO status_history (application_id, user_id, from_status, to_status, note) VALUES (?,?,?,?,?)').run(applicationId, req.user.id, null, classification.suggested_status || 'applied', `Auto-created from email: ${subject || 'No subject'}`);
-        action = 'created';
+        action = 'exists';
       }
+    } else {
+      const newApp = db.prepare('INSERT INTO applications (user_id, company, role, status, platform, applied_date) VALUES (?, ?, ?, ?, ?, ?)').run(req.user.id, company, role || 'Unknown Role', status || 'applied', 'Email', appliedDate);
+      applicationId = newApp.lastInsertRowid;
+      db.prepare('INSERT INTO status_history (application_id, user_id, from_status, to_status, note) VALUES (?,?,?,?,?)').run(applicationId, req.user.id, null, status || 'applied', 'Created from email classification');
+      action = 'created';
     }
 
-    const r = db.prepare('INSERT INTO emails (user_id,application_id,subject,body,classification,extracted_data) VALUES (?,?,?,?,?,?)').run(req.user.id, applicationId, subject||null, body, classification.classification, JSON.stringify(classification));
-    res.json({ id: r.lastInsertRowid, classification, applicationId, action });
+    // Link email to application
+    if (email_id) {
+      db.prepare('UPDATE emails SET application_id=? WHERE id=? AND user_id=?').run(applicationId, email_id, req.user.id);
+    }
+
+    res.json({ applicationId, action });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

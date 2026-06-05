@@ -56,6 +56,7 @@ export const api = {
   removeEmailAccount: (id) => request(`/emails/accounts/${id}`, { method: 'DELETE' }),
   fetchEmails: () => request('/emails/fetch', { method: 'POST' }),
   classifyEmail: (body) => request('/emails/classify', { method: 'POST', body: JSON.stringify(body) }),
+  confirmClassification: (body) => request('/emails/classify/confirm', { method: 'POST', body: JSON.stringify(body) }),
   getEmails: () => request('/emails'),
 
   // Colleges & Stacks
