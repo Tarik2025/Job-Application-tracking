@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Career Copilot - Job Scraper",
+  "version": "1.0.0",
+  "description": "Extract job details from LinkedIn, Naukri, Glassdoor and save to Career Copilot",
+  "permissions": ["activeTab", "storage"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "icon.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.linkedin.com/jobs/*",
+        "*://*.naukri.com/*",
+        "*://*.glassdoor.com/job-listing/*",
+        "*://*.glassdoor.co.in/job-listing/*",
+        "*://*.indeed.com/viewjob*"
+      ],
+      "js": ["content.js"]
+    }
+  ]
+}
