@@ -171,6 +171,14 @@ export default function EmailClassifier({ onClassified }) {
 
             {accounts.length === 0 && <p className="text-xs text-[var(--warning)] mt-2 text-center">Connect an account first</p>}
 
+            <div className="mt-4 p-3 rounded-xl bg-[var(--warning)]/5 border border-[var(--warning)]/20">
+              <p className="text-xs font-medium text-[var(--warning)] mb-1">⚠️ Connection Issues?</p>
+              <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
+                If you get "ECONNRESET" errors, your network (college/office/ISP) may be blocking IMAP port 993.
+                Try: VPN, mobile hotspot, or use the <strong>Manual Paste</strong> tab instead.
+              </p>
+            </div>
+
             {fetchResult && (
               <div className="mt-5 p-4 rounded-xl bg-[var(--bg-secondary)]">
                 {fetchResult.error ? (
