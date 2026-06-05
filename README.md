@@ -205,6 +205,11 @@ SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your-email@gmail.com
 SMTP_PASS=your-16-char-app-password
+
+# Admin Panel
+ADMIN_EMAIL=your-admin-email@example.com
+ADMIN_PASSWORD=your-secure-admin-password
+ADMIN_SECRET=your-secret-key
 ```
 
 ### 3. Run
@@ -236,6 +241,9 @@ cd client && npm run dev
 | `SMTP_PORT` | SMTP port (587 for Gmail) | Optional |
 | `SMTP_USER` | Email address for sending | Optional |
 | `SMTP_PASS` | Gmail 16-char app password | Optional |
+| `ADMIN_EMAIL` | Admin login email | Yes |
+| `ADMIN_PASSWORD` | Admin login password | Yes |
+| `ADMIN_SECRET` | Admin secret key (extra auth layer) | Yes |
 
 **Getting Gmail App Password:**
 1. Enable 2FA at https://myaccount.google.com/security
@@ -454,9 +462,12 @@ The system recognizes 200+ skills across categories:
 ## Admin Panel
 
 ### Access
-- **Email:** smdtarik1244@gmail.com
-- **Password:** Apple@2302
-- **Secret Key:** 2302
+Admin credentials are stored in environment variables (not in code):
+- `ADMIN_EMAIL` — Your admin email
+- `ADMIN_PASSWORD` — Your admin password
+- `ADMIN_SECRET` — Secret key for extra security
+
+Set these in `server/.env` (never commit this file).
 
 ### Features
 - Platform statistics (users, apps, emails, resumes)

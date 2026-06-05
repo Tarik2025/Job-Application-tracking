@@ -1,3 +1,5 @@
+import dotenv from 'dotenv';
+dotenv.config();
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -6,9 +8,9 @@ import { paginate, buildSort, paginatedResponse } from '../utils/pagination.js';
 
 const router = Router();
 
-const ADMIN_EMAIL = 'smdtarik1244@gmail.com';
-const ADMIN_PASSWORD = 'Apple@2302';
-const ADMIN_SECRET = '2302';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const ADMIN_SECRET = process.env.ADMIN_SECRET;
 
 // Admin login with secret key
 router.post('/login', async (req, res) => {
