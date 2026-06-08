@@ -370,8 +370,12 @@ export default function SignupPage() {
                     <Input label="Passout Year" placeholder="2025" value={form.passout_year} onChange={e => set('passout_year', e.target.value.replace(/\D/g,'').slice(0,4))} />
                   </div>
                 </>) : (<>
-                  <Input label="Company *" placeholder="Google, TCS..." value={form.company} onChange={e => set('company', e.target.value)} />
-                  <Input label="Designation *" placeholder="Software Engineer" value={form.designation} onChange={e => set('designation', e.target.value)} />
+                  <Field label="Company *">
+                    <CompanyAutocomplete value={form.company} onChange={v => set('company', v)} />
+                  </Field>
+                  <Field label="Designation / Role *">
+                    <RoleAutocomplete value={form.designation} onChange={v => set('designation', v)} />
+                  </Field>
                   <Select label="Experience *" value={form.experience} onChange={e => set('experience', e.target.value)} placeholder="Select" options={['Fresher','0-1 years','1-3 years','3-5 years','5-10 years','10+ years']} />
                 </>)}
                 <div className="flex gap-3 mt-2">
@@ -441,3 +445,77 @@ function CollegeAutocomplete({ value, onChange }) {
     </div>
   );
 }
+function CompanyAutocomplete({ value, onChange }) {
+  const [suggestions, setSuggestions] = useState([]);
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (value.length >= 2) {
+      fetch('https://autocomplete.clearbit.com/v1/companies/suggest?query=' + encodeURIComponent(value))
+        .then(r => r.json()).then(d => setSuggestions(d.slice(0, 8))).catch(() => setSuggestions([]));
+    } else setSuggestions([]);
+  }, [value]);
+
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <input type="text" value={value} onChange={e => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)} placeholder="Type company name..."
+        className="w-full h-11 px-3.5 text-sm rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--primary)] placeholder:text-[var(--text-secondary)]/50" />
+      {open && suggestions.length > 0 && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-xl z-50 max-h-[200px] overflow-y-auto">
+          {suggestions.map((s, i) => (
+            <button key={i} type="button" onClick={() => { onChange(s.name); setOpen(false); }}
+              className="w-full text-left px-3 py-2.5 text-sm text-[var(--text)] hover:bg-[var(--bg-secondary)] cursor-pointer flex items-center gap-2">
+              <span className="font-medium">{s.name}</span>
+              <span className="text-[10px] text-[var(--text-secondary)]">{s.domain}</span>
+            </button>
+          ))}
+          {value.length >= 2 && (
+            <button type="button" onClick={() => setOpen(false)}
+              className="w-full text-left px-3 py-2 text-sm text-[var(--primary)] hover:bg-[var(--bg-secondary)] cursor-pointer border-t border-[var(--border)]">
+              + Use "{value}"
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const COMMON_ROLES = ['Software Engineer','Frontend Developer','Backend Developer','Full Stack Developer','Data Scientist','Data Analyst','Product Manager','UI/UX Designer','DevOps Engineer','Cloud Engineer','ML Engineer','QA Engineer','Mobile Developer','iOS Developer','Android Developer','Cybersecurity Analyst','Business Analyst','Project Manager','Technical Lead','Engineering Manager','Solutions Architect','Database Administrator','System Administrator','Network Engineer','Embedded Engineer','Game Developer','Blockchain Developer','AI Engineer','SRE','Technical Writer','Scrum Master','Sales Engineer','Support Engineer','Research Engineer','Intern'];
+
+function RoleAutocomplete({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const filtered = value ? COMMON_ROLES.filter(r => r.toLowerCase().includes(value.toLowerCase())) : COMMON_ROLES;
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <input type="text" value={value} onChange={e => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)} placeholder="Type or select role..."
+        className="w-full h-11 px-3.5 text-sm rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--primary)] placeholder:text-[var(--text-secondary)]/50" />
+      {open && filtered.length > 0 && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-xl z-50 max-h-[200px] overflow-y-auto">
+          {filtered.slice(0, 12).map((r, i) => (
+            <button key={i} type="button" onClick={() => { onChange(r); setOpen(false); }}
+              className="w-full text-left px-3 py-2 text-sm text-[var(--text)] hover:bg-[var(--bg-secondary)] cursor-pointer">{r}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
