@@ -5,8 +5,9 @@ const router = Router();
 
 router.get('/', (req, res) => {
   const { q } = req.query;
-  const results = q && q.length >= 2
-    ? db.prepare('SELECT name FROM colleges WHERE name LIKE ? ORDER BY name LIMIT 20').all(`%${q}%`)
+  const sanitized = q ? q.replace(/[%_]/g, '') : '';
+  const results = sanitized && sanitized.length >= 2
+    ? db.prepare('SELECT name FROM colleges WHERE name LIKE ? ORDER BY name LIMIT 20').all(`%${sanitized}%`)
     : db.prepare('SELECT name FROM colleges ORDER BY name LIMIT 50').all();
   res.json(results.map(r => r.name));
 });

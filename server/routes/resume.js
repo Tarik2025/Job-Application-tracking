@@ -9,7 +9,14 @@ import { analyzeResume } from '../services/manual.js';
 
 const router = Router();
 router.use(auth);
-const upload = multer({ dest: 'uploads/', fileFilter: (_, f, cb) => cb(null, f.mimetype === 'application/pdf') });
+const upload = multer({
+  dest: 'uploads/',
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB max
+  fileFilter: (_, f, cb) => {
+    if (f.mimetype !== 'application/pdf') return cb(new Error('Only PDF files allowed'), false);
+    cb(null, true);
+  }
+});
 
 // List resumes
 router.get('/', (req, res) => {
