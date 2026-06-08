@@ -3,16 +3,15 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { FadeIn, InputField, SelectDropdown, Button } from '@/components/ui';
+import { FadeIn, Button } from '@/components/ui';
 import { ThemeToggle } from '@/lib/theme';
 import { api } from '@/lib/api';
 
-// Degree → Branch mapping
 const DEGREE_BRANCHES = {
-  'B.Tech': ['Computer Science Engineering', 'Information Technology', 'Electronics & Communication', 'Electrical Engineering', 'Mechanical Engineering', 'Civil Engineering', 'Chemical Engineering', 'Biotechnology', 'Aerospace Engineering', 'Automobile Engineering', 'Industrial Engineering', 'Instrumentation Engineering', 'Mining Engineering', 'Petroleum Engineering', 'Agricultural Engineering', 'Marine Engineering', 'Textile Engineering', 'Food Technology', 'Environmental Engineering', 'Metallurgical Engineering', 'Polymer Engineering', 'Ceramic Engineering', 'Production Engineering', 'Biomedical Engineering', 'Robotics Engineering', 'AI & Data Science', 'Cyber Security', 'IoT', 'Mechatronics', 'Nanotechnology'],
-  'M.Tech': ['Computer Science Engineering', 'Information Technology', 'Electronics & Communication', 'Electrical Engineering', 'Mechanical Engineering', 'Civil Engineering', 'VLSI Design', 'Embedded Systems', 'Signal Processing', 'Machine Learning', 'Data Science', 'Structural Engineering', 'Power Systems', 'Control Systems', 'Thermal Engineering', 'Manufacturing Engineering'],
-  'B.E.': ['Computer Science Engineering', 'Information Technology', 'Electronics & Communication', 'Electrical Engineering', 'Mechanical Engineering', 'Civil Engineering', 'Chemical Engineering', 'Biotechnology', 'Instrumentation Engineering'],
-  'M.E.': ['Computer Science Engineering', 'Electronics & Communication', 'Mechanical Engineering', 'Civil Engineering', 'VLSI Design', 'Embedded Systems', 'Structural Engineering'],
+  'B.Tech': ['Computer Science Engineering', 'Information Technology', 'Electronics & Communication', 'Electrical Engineering', 'Mechanical Engineering', 'Civil Engineering', 'Chemical Engineering', 'Biotechnology', 'Aerospace Engineering', 'Automobile Engineering', 'Industrial Engineering', 'Instrumentation Engineering', 'Mining Engineering', 'Petroleum Engineering', 'Agricultural Engineering', 'Marine Engineering', 'Textile Engineering', 'Food Technology', 'Environmental Engineering', 'Metallurgical Engineering', 'Robotics Engineering', 'AI & Data Science', 'Cyber Security', 'IoT', 'Mechatronics', 'Biomedical Engineering', 'Production Engineering', 'Nanotechnology', 'Polymer Engineering', 'Ceramic Engineering'],
+  'M.Tech': ['Computer Science', 'Information Technology', 'Electronics & Communication', 'Electrical Engineering', 'Mechanical Engineering', 'Civil Engineering', 'VLSI Design', 'Embedded Systems', 'Signal Processing', 'Machine Learning', 'Data Science', 'Structural Engineering', 'Power Systems', 'Control Systems', 'Thermal Engineering', 'Manufacturing Engineering'],
+  'B.E.': ['Computer Science', 'Information Technology', 'Electronics & Communication', 'Electrical Engineering', 'Mechanical Engineering', 'Civil Engineering', 'Chemical Engineering', 'Biotechnology', 'Instrumentation Engineering'],
+  'M.E.': ['Computer Science', 'Electronics & Communication', 'Mechanical Engineering', 'Civil Engineering', 'VLSI Design', 'Embedded Systems', 'Structural Engineering'],
   'BCA': ['Computer Applications', 'Data Science', 'Cloud Computing', 'Cyber Security', 'AI & ML', 'Web Development', 'Mobile App Development'],
   'MCA': ['Computer Applications', 'Data Science', 'Cloud Computing', 'Cyber Security', 'AI & ML', 'Software Engineering', 'Database Management'],
   'B.Sc': ['Computer Science', 'Physics', 'Chemistry', 'Mathematics', 'Biology', 'Statistics', 'Electronics', 'Biotechnology', 'Microbiology', 'Zoology', 'Botany', 'Environmental Science', 'Data Science', 'IT'],
@@ -25,97 +24,93 @@ const DEGREE_BRANCHES = {
   'MA': ['English', 'Hindi', 'History', 'Political Science', 'Economics', 'Psychology', 'Sociology', 'Philosophy', 'Public Administration'],
   'PhD': ['Computer Science', 'Physics', 'Chemistry', 'Mathematics', 'Engineering', 'Management', 'Biotechnology', 'Economics', 'Psychology', 'Literature'],
   '10th': ['General'],
-  '12th Science': ['PCM (Physics, Chemistry, Math)', 'PCB (Physics, Chemistry, Biology)', 'PCMB'],
+  '12th Science': ['PCM', 'PCB', 'PCMB'],
   '12th Commerce': ['Commerce with Maths', 'Commerce without Maths'],
   '12th Arts': ['Arts / Humanities'],
   'Diploma': ['Computer Engineering', 'Mechanical Engineering', 'Electrical Engineering', 'Civil Engineering', 'Electronics', 'Automobile Engineering', 'IT', 'Chemical Engineering'],
 };
-
 const ALL_DEGREES = ['10th', '12th Science', '12th Commerce', '12th Arts', 'Diploma', 'B.Tech', 'B.E.', 'BCA', 'B.Sc', 'B.Com', 'BBA', 'BA', 'M.Tech', 'M.E.', 'MCA', 'M.Sc', 'M.Com', 'MBA', 'MA', 'PhD', 'Other'];
 
-function getPasswordStrength(pw) {
-  let score = 0;
-  if (pw.length >= 8) score++;
-  if (pw.length >= 12) score++;
-  if (/[A-Z]/.test(pw)) score++;
-  if (/[a-z]/.test(pw)) score++;
-  if (/[0-9]/.test(pw)) score++;
-  if (/[^A-Za-z0-9]/.test(pw)) score++;
-  if (score <= 2) return { label: 'Weak', color: 'var(--danger)', width: '25%' };
-  if (score <= 4) return { label: 'Medium', color: 'var(--warning, #fbbf24)', width: '55%' };
-  return { label: 'Strong', color: 'var(--success)', width: '100%' };
-}
-
-function getPasswordErrors(pw) {
-  const errs = [];
-  if (pw.length < 8) errs.push('At least 8 characters');
-  if (!/[A-Z]/.test(pw)) errs.push('One uppercase letter');
-  if (!/[a-z]/.test(pw)) errs.push('One lowercase letter');
-  if (!/[0-9]/.test(pw)) errs.push('One number');
-  if (!/[^A-Za-z0-9]/.test(pw)) errs.push('One special character (!@#$...)');
-  return errs;
-}
-
-function CollegeInput({ value, onChange }) {
-  const [suggestions, setSuggestions] = useState([]);
-  const [showSugg, setShowSugg] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    if (value.length >= 2) api.searchColleges(value).then(setSuggestions).catch(() => setSuggestions([]));
-    else setSuggestions([]);
-  }, [value]);
-
-  useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setShowSugg(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
+// Clean input component
+function Field({ label, children, error }) {
   return (
-    <div className="flex flex-col gap-1.5 relative" ref={ref}>
-      <label className="text-[13px] font-medium text-[var(--muted)]">College / University *</label>
-      <input type="text" value={value} onChange={e => { onChange(e.target.value); setShowSugg(true); }}
-        placeholder="Start typing..." onFocus={() => setShowSugg(true)}
-        className="w-full h-[42px] px-3.5 text-sm rounded-[10px] bg-[var(--input)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--accent)] placeholder:text-[var(--muted)] placeholder:opacity-60" />
-      {showSugg && suggestions.length > 0 && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg z-20 max-h-[180px] overflow-y-auto">
-          {suggestions.map((s, i) => (
-            <button key={i} onClick={() => { onChange(s); setShowSugg(false); }} className="w-full text-left px-3 py-2 text-sm text-[var(--text)] hover:bg-[var(--input)] cursor-pointer">{s}</button>
-          ))}
-          <button onClick={() => setShowSugg(false)} className="w-full text-left px-3 py-2 text-sm text-[var(--accent)] hover:bg-[var(--input)] cursor-pointer border-t border-[var(--border)]">+ Add "{value}" as new</button>
-        </div>
-      )}
+    <div className="flex flex-col gap-1">
+      {label && <label className="text-[12px] font-medium text-[var(--text-secondary)] uppercase tracking-wide">{label}</label>}
+      {children}
+      {error && <p className="text-[11px] text-[var(--danger)]">{error}</p>}
     </div>
   );
 }
 
-function BranchInput({ degree, value, onChange }) {
-  const [showSugg, setShowSugg] = useState(false);
-  const branches = DEGREE_BRANCHES[degree] || [];
-  const filtered = value ? branches.filter(b => b.toLowerCase().includes(value.toLowerCase())) : branches;
+function Input({ label, error, ...props }) {
+  return (
+    <Field label={label} error={error}>
+      <input {...props} className={`w-full h-11 px-3.5 text-sm rounded-lg bg-[var(--bg-secondary)] border text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-secondary)]/50 ${error ? 'border-[var(--danger)]/50 focus:border-[var(--danger)]' : 'border-[var(--border)] focus:border-[var(--primary)]'} ${props.disabled ? 'opacity-50 cursor-not-allowed' : ''}`} />
+    </Field>
+  );
+}
+
+function Select({ label, value, onChange, options, placeholder, error, disabled }) {
+  return (
+    <Field label={label} error={error}>
+      <select value={value} onChange={onChange} disabled={disabled}
+        className={`w-full h-11 px-3 text-sm rounded-lg bg-[var(--bg-secondary)] border text-[var(--text)] outline-none transition-colors appearance-none cursor-pointer ${error ? 'border-[var(--danger)]/50' : 'border-[var(--border)] focus:border-[var(--primary)]'} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center' }}>
+        {placeholder && <option value="">{placeholder}</option>}
+        {options.map(o => typeof o === 'string' ? <option key={o} value={o}>{o}</option> : <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </Field>
+  );
+}
+
+function SearchSelect({ label, value, onChange, options, placeholder, disabled }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const ref = useRef(null);
+  const filtered = options.filter(o => {
+    const name = typeof o === 'string' ? o : o.label;
+    return name.toLowerCase().includes(search.toLowerCase());
+  });
 
   useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setShowSugg(false); };
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  const displayValue = options.find(o => (typeof o === 'string' ? o : o.value) === value);
+  const displayLabel = displayValue ? (typeof displayValue === 'string' ? displayValue : displayValue.label) : '';
+
   return (
-    <div className="flex flex-col gap-1.5 relative" ref={ref}>
-      <label className="text-[13px] font-medium text-[var(--muted)]">Branch / Major *</label>
-      <input type="text" value={value} onChange={e => { onChange(e.target.value); setShowSugg(true); }}
-        placeholder={degree ? "Type or select..." : "Select degree first"} onFocus={() => setShowSugg(true)} disabled={!degree}
-        className="w-full h-[42px] px-3.5 text-sm rounded-[10px] bg-[var(--input)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--accent)] placeholder:text-[var(--muted)] placeholder:opacity-60 disabled:opacity-50" />
-      {showSugg && filtered.length > 0 && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg z-20 max-h-[180px] overflow-y-auto">
-          {filtered.map((b, i) => (
-            <button key={i} onClick={() => { onChange(b); setShowSugg(false); }} className="w-full text-left px-3 py-2 text-sm text-[var(--text)] hover:bg-[var(--input)] cursor-pointer">{b}</button>
-          ))}
-        </div>
-      )}
-    </div>
+    <Field label={label}>
+      <div className="relative" ref={ref}>
+        <button type="button" onClick={() => !disabled && setOpen(!open)} disabled={disabled}
+          className={`w-full h-11 px-3.5 text-sm rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-left outline-none transition-colors ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-[var(--primary)]'} ${value ? 'text-[var(--text)]' : 'text-[var(--text-secondary)]/50'}`}>
+          {displayLabel || placeholder || 'Select...'}
+        </button>
+        {open && (
+          <div className="absolute top-full left-0 right-0 mt-1 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-xl z-50 overflow-hidden">
+            <div className="p-2 border-b border-[var(--border)]">
+              <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." autoFocus
+                className="w-full h-8 px-2.5 text-xs rounded-md bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--primary)] placeholder:text-[var(--text-secondary)]/50" />
+            </div>
+            <div className="max-h-[200px] overflow-y-auto">
+              {filtered.length === 0 && <p className="px-3 py-2 text-xs text-[var(--text-secondary)]">No results</p>}
+              {filtered.slice(0, 50).map((o, i) => {
+                const val = typeof o === 'string' ? o : o.value;
+                const lbl = typeof o === 'string' ? o : o.label;
+                return (
+                  <button key={i} type="button" onClick={() => { onChange(val); setOpen(false); setSearch(''); }}
+                    className={`w-full text-left px-3 py-2 text-sm transition-colors cursor-pointer ${val === value ? 'bg-[var(--primary)]/10 text-[var(--primary)]' : 'text-[var(--text)] hover:bg-[var(--bg-secondary)]'}`}>
+                    {lbl}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </Field>
   );
 }
 
@@ -125,80 +120,74 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
-  const [showPwRules, setShowPwRules] = useState(false);
-  const [emailChecking, setEmailChecking] = useState(false);
-  const [emailExists, setEmailExists] = useState(false);
+  const [emailStatus, setEmailStatus] = useState(''); // '', 'checking', 'exists', 'available'
   const [countries, setCountries] = useState([]);
   const [states, setStates] = useState([]);
   const [cities, setCities] = useState([]);
   const [form, setForm] = useState({
     name: '', email: '', password: '', confirmPassword: '', phone: '', country_code: '+91', gender: '', dob: '',
-    user_type: '',
-    college: '', degree: '', customDegree: '', branch: '', year_of_study: '', passout_year: '',
+    user_type: '', college: '', degree: '', customDegree: '', branch: '', year_of_study: '', passout_year: '',
     company: '', designation: '', experience: '',
-    city: '', state: '', country: 'India',
-    linkedin: '', github: '', portfolio: ''
+    city: '', state: '', country: '', linkedin: '', github: '', portfolio: ''
   });
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
-  const pwStrength = getPasswordStrength(form.password);
-  const pwErrors = getPasswordErrors(form.password);
 
-  // Fetch countries from REST API
+  // Password
+  const pwErrors = [];
+  if (form.password.length > 0) {
+    if (form.password.length < 8) pwErrors.push('8+ chars');
+    if (!/[A-Z]/.test(form.password)) pwErrors.push('uppercase');
+    if (!/[0-9]/.test(form.password)) pwErrors.push('number');
+    if (!/[^A-Za-z0-9]/.test(form.password)) pwErrors.push('special char');
+  }
+  const pwStrength = form.password.length === 0 ? 0 : pwErrors.length === 0 ? 3 : pwErrors.length <= 2 ? 2 : 1;
+
+  // Countries
   useEffect(() => {
     fetch('https://restcountries.com/v3.1/all?fields=name,cca2,idd,flag')
       .then(r => r.json())
       .then(data => {
-        const sorted = data.map(c => ({
-          name: c.name.common,
-          code: c.cca2,
-          flag: c.flag,
+        setCountries(data.map(c => ({
+          name: c.name.common, code: c.cca2, flag: c.flag,
           phone: c.idd?.root ? `${c.idd.root}${c.idd.suffixes?.[0] || ''}` : ''
-        })).sort((a, b) => a.name.localeCompare(b.name));
-        setCountries(sorted);
+        })).filter(c => c.phone).sort((a, b) => a.name.localeCompare(b.name)));
       }).catch(() => {});
   }, []);
 
-  // Fetch states when country changes
+  // States
   useEffect(() => {
-    if (!form.country) { setStates([]); return; }
+    if (!form.country) { setStates([]); setCities([]); return; }
     fetch('https://countriesnow.space/api/v0.1/countries/states', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ country: form.country })
-    }).then(r => r.json()).then(d => {
-      if (d.data?.states) setStates(d.data.states.map(s => s.name).sort());
-      else setStates([]);
-    }).catch(() => setStates([]));
+    }).then(r => r.json()).then(d => setStates(d.data?.states?.map(s => s.name).sort() || []))
+      .catch(() => setStates([]));
     set('state', ''); set('city', '');
   }, [form.country]);
 
-  // Fetch cities when state changes
+  // Cities
   useEffect(() => {
-    if (!form.country || !form.state) { setCities([]); return; }
+    if (!form.state || !form.country) { setCities([]); return; }
     fetch('https://countriesnow.space/api/v0.1/countries/state/cities', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ country: form.country, state: form.state })
-    }).then(r => r.json()).then(d => {
-      if (d.data) setCities(d.data.sort());
-      else setCities([]);
-    }).catch(() => setCities([]));
+    }).then(r => r.json()).then(d => setCities(d.data?.sort() || []))
+      .catch(() => setCities([]));
     set('city', '');
   }, [form.state]);
 
-  // Real-time email check
+  // Email check
   useEffect(() => {
-    if (!form.email || !/\\S+@\\S+\\.\\S+/.test(form.email)) { setEmailExists(false); return; }
-    const timer = setTimeout(() => {
-      setEmailChecking(true);
-      api.checkEmail(form.email)
-        .then(d => setEmailExists(d.exists))
-        .catch(() => setEmailExists(false))
-        .finally(() => setEmailChecking(false));
+    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) { setEmailStatus(''); return; }
+    setEmailStatus('checking');
+    const t = setTimeout(() => {
+      api.checkEmail(form.email).then(d => setEmailStatus(d.exists ? 'exists' : 'available')).catch(() => setEmailStatus(''));
     }, 600);
-    return () => clearTimeout(timer);
+    return () => clearTimeout(t);
   }, [form.email]);
 
-  // Update country code when country changes
+  // Country code sync
   useEffect(() => {
     const c = countries.find(c => c.name === form.country);
     if (c?.phone) set('country_code', c.phone);
@@ -206,55 +195,48 @@ export default function SignupPage() {
 
   const maxDob = new Date(new Date().setFullYear(new Date().getFullYear() - 5)).toISOString().split('T')[0];
 
-  const validateStep1 = () => {
-    if (!form.name.trim() || form.name.trim().length < 2) return 'Full name is required (min 2 chars)';
-    if (!form.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return 'Valid email is required';
-    if (emailExists) return 'This email is already registered';
-    if (pwErrors.length > 0) return 'Password does not meet requirements';
-    if (form.password !== form.confirmPassword) return 'Passwords do not match';
-    if (!form.phone || form.phone.length < 7) return 'Valid phone number required (min 7 digits)';
-    if (!form.gender) return 'Gender is required';
-    if (!form.dob) return 'Date of birth is required';
-    return null;
-  };
-
-  const validateStep3 = () => {
-    if (form.user_type === 'student') {
-      if (!form.college.trim()) return 'College is required';
-      if (!form.degree) return 'Degree/Education is required';
-      if (form.degree === 'Other' && !form.customDegree.trim()) return 'Enter your degree name';
-      if (!form.branch.trim()) return 'Branch/Major is required';
-      if (!form.year_of_study) return 'Year of study is required';
-    } else {
-      if (!form.company.trim()) return 'Company is required';
-      if (!form.designation.trim()) return 'Designation is required';
-      if (!form.experience) return 'Experience is required';
+  const validate = () => {
+    if (step === 1) {
+      if (!form.name.trim()) return 'Name is required';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return 'Valid email required';
+      if (emailStatus === 'exists') return 'Email already registered';
+      if (pwErrors.length > 0) return 'Password needs: ' + pwErrors.join(', ');
+      if (form.password !== form.confirmPassword) return 'Passwords do not match';
+      if (!form.phone || form.phone.length < 7) return 'Phone required (min 7 digits)';
+      if (!form.gender) return 'Select gender';
+      if (!form.dob) return 'Date of birth required';
+    } else if (step === 2) {
+      if (!form.user_type) return 'Select profile type';
+    } else if (step === 3) {
+      if (form.user_type === 'student') {
+        if (!form.college.trim()) return 'College required';
+        if (!form.degree) return 'Education required';
+        if (form.degree === 'Other' && !form.customDegree.trim()) return 'Enter degree name';
+        if (!form.branch) return 'Branch required';
+        if (!form.year_of_study) return 'Year of study required';
+      } else {
+        if (!form.company.trim()) return 'Company required';
+        if (!form.designation.trim()) return 'Designation required';
+        if (!form.experience) return 'Experience required';
+      }
+    } else if (step === 4) {
+      if (!form.country) return 'Country required';
+      if (!form.state) return 'State required';
+      if (!form.city) return 'City required';
     }
     return null;
   };
 
-  const validateStep4 = () => {
-    if (!form.country) return 'Country is required';
-    if (!form.state) return 'State is required';
-    if (!form.city) return 'City is required';
-    return null;
-  };
-
-  const next = () => {
-    setError('');
-    if (step === 1) { const err = validateStep1(); if (err) return setError(err); setStep(2); }
-    else if (step === 2) { if (!form.user_type) return setError('Select your profile type'); setStep(3); }
-    else if (step === 3) { const err = validateStep3(); if (err) return setError(err); setStep(4); }
-  };
+  const next = () => { const err = validate(); if (err) return setError(err); setError(''); setStep(s => s + 1); };
+  const back = () => { setError(''); setStep(s => s - 1); };
 
   const submit = async () => {
-    const err = validateStep4();
+    const err = validate();
     if (err) return setError(err);
     setLoading(true); setError('');
     try {
       const payload = { ...form, degree: form.degree === 'Other' ? form.customDegree : form.degree };
-      delete payload.confirmPassword;
-      delete payload.customDegree;
+      delete payload.confirmPassword; delete payload.customDegree;
       await api.register(payload);
       setSuccess(true);
       setTimeout(() => router.push('/login'), 2000);
@@ -263,211 +245,199 @@ export default function SignupPage() {
   };
 
   if (success) return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="w-full max-w-[360px] bg-[var(--card)] border border-[var(--border)] rounded-[14px] p-10 text-center">
-        <div className="w-10 h-10 rounded-full border-2 border-[var(--success)] flex items-center justify-center text-[var(--success)] font-bold mx-auto mb-4">✓</div>
-        <h2 className="text-lg font-semibold mb-1">Account created</h2>
-        <p className="text-[13px] text-[var(--muted)]">Redirecting to sign in...</p>
-      </div>
+    <div className="min-h-screen flex items-center justify-center px-4 bg-[var(--bg)]">
+      <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+        className="w-full max-w-[360px] bg-[var(--card)] border border-[var(--border)] rounded-2xl p-10 text-center">
+        <div className="w-12 h-12 rounded-full bg-[var(--success)]/10 flex items-center justify-center text-[var(--success)] text-xl mx-auto mb-4">✓</div>
+        <h2 className="text-lg font-semibold mb-1">Account Created!</h2>
+        <p className="text-sm text-[var(--text-secondary)]">Redirecting to login...</p>
+      </motion.div>
     </div>
   );
 
-  const selectedCountry = countries.find(c => c.name === form.country);
-
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-8">
+    <div className="min-h-screen flex items-center justify-center px-4 py-8 bg-[var(--bg)]">
       <div className="absolute top-4 right-4"><ThemeToggle /></div>
 
-      <FadeIn className="w-full max-w-[500px]">
-        <div className="bg-[var(--card)] border border-[var(--border)] rounded-[14px] p-6 sm:p-8">
-          <Link href="/login" className="text-xs text-[var(--muted)] no-underline hover:text-[var(--accent)] transition-colors block mb-5">← Back to sign in</Link>
+      <FadeIn className="w-full max-w-[440px]">
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 sm:p-8 shadow-lg">
+          <Link href="/login" className="text-xs text-[var(--text-secondary)] no-underline hover:text-[var(--primary)] block mb-6">← Sign in instead</Link>
 
-          <h1 className="text-lg font-semibold mb-1">Create account</h1>
-          <p className="text-[13px] text-[var(--muted)] mb-5">Step {step} of 4</p>
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-9 h-9 rounded-lg bg-[var(--primary)] flex items-center justify-center text-white font-bold text-sm">C</div>
+            <div>
+              <h1 className="text-base font-semibold">Create Account</h1>
+              <p className="text-[11px] text-[var(--text-secondary)]">Step {step} of 4</p>
+            </div>
+          </div>
 
-          <div className="flex gap-1.5 mb-6">
-            {[1, 2, 3, 4].map(s => (
-              <div key={s} className="flex-1 h-[3px] rounded-full transition-colors" style={{ background: step >= s ? 'var(--accent)' : 'var(--border)' }} />
+          {/* Progress */}
+          <div className="flex gap-1 mb-6">
+            {[1,2,3,4].map(s => (
+              <div key={s} className={`flex-1 h-1 rounded-full transition-all duration-300 ${step >= s ? 'bg-[var(--primary)]' : 'bg-[var(--border)]'}`} />
             ))}
           </div>
 
-          {error && <p className="text-[13px] text-[var(--danger)] p-2.5 rounded-lg bg-[var(--danger)]/5 border border-[var(--danger)]/20 mb-4">{error}</p>}
+          {error && (
+            <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
+              className="text-xs text-[var(--danger)] p-3 rounded-lg bg-[var(--danger)]/5 border border-[var(--danger)]/20 mb-4">{error}</motion.p>
+          )}
 
           <AnimatePresence mode="wait">
-            {/* Step 1: Account */}
             {step === 1 && (
-              <motion.div key="1" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} className="flex flex-col gap-3.5">
-                <InputField label="Full name *" placeholder="John Doe" value={form.name} onChange={e => set('name', e.target.value)} />
+              <motion.div key="1" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
+                <Input label="Full Name *" placeholder="Your full name" value={form.name} onChange={e => set('name', e.target.value)} />
 
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[13px] font-medium text-[var(--muted)]">Email *</label>
-                  <input type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="you@example.com"
-                    className={`w-full h-[42px] px-3.5 text-sm rounded-[10px] bg-[var(--input)] border text-[var(--text)] outline-none focus:border-[var(--accent)] placeholder:text-[var(--muted)] placeholder:opacity-60 ${emailExists ? 'border-[var(--danger)]' : 'border-[var(--border)]'}`} />
-                  {emailChecking && <p className="text-[11px] text-[var(--muted)]">Checking...</p>}
-                  {emailExists && <p className="text-[11px] text-[var(--danger)]">⚠ This email is already registered</p>}
-                </div>
+                <Field label="Email *" error={emailStatus === 'exists' ? '⚠ Already registered' : ''}>
+                  <div className="relative">
+                    <input type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="you@example.com"
+                      className={`w-full h-11 px-3.5 text-sm rounded-lg bg-[var(--bg-secondary)] border text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-secondary)]/50 ${emailStatus === 'exists' ? 'border-[var(--danger)]/50' : emailStatus === 'available' ? 'border-[var(--success)]/50' : 'border-[var(--border)] focus:border-[var(--primary)]'}`} />
+                    {emailStatus === 'checking' && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--text-secondary)]">...</span>}
+                    {emailStatus === 'available' && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--success)]">✓</span>}
+                  </div>
+                </Field>
 
-                {/* Phone with flag */}
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[13px] font-medium text-[var(--muted)]">Phone *</label>
+                {/* Phone */}
+                <Field label="Phone *">
                   <div className="flex gap-2">
-                    <div className="flex items-center gap-1 h-[42px] px-2.5 rounded-[10px] bg-[var(--input)] border border-[var(--border)] text-sm min-w-[90px]">
-                      <span className="text-lg">{selectedCountry?.flag || '🇮🇳'}</span>
-                      <span className="text-[var(--text)]">{form.country_code || '+91'}</span>
-                    </div>
+                    <SearchSelect value={form.country_code} onChange={v => set('country_code', v)} placeholder="Code"
+                      options={countries.map(c => ({ value: c.phone, label: `${c.flag} ${c.phone}` }))} />
                     <input type="tel" placeholder="9876543210" value={form.phone}
                       onChange={e => set('phone', e.target.value.replace(/\D/g, '').slice(0, 15))}
-                      className="flex-1 h-[42px] px-3.5 text-sm rounded-[10px] bg-[var(--input)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--accent)] placeholder:text-[var(--muted)] placeholder:opacity-60" />
+                      className="flex-1 h-11 px-3.5 text-sm rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--primary)] placeholder:text-[var(--text-secondary)]/50" />
                   </div>
-                </div>
+                </Field>
 
                 {/* Password */}
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[13px] font-medium text-[var(--muted)]">Password *</label>
-                  <input type="password" value={form.password} onChange={e => set('password', e.target.value)} onFocus={() => setShowPwRules(true)}
-                    placeholder="Min 8 chars, uppercase, number, special"
-                    className="w-full h-[42px] px-3.5 text-sm rounded-[10px] bg-[var(--input)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--accent)] placeholder:text-[var(--muted)] placeholder:opacity-60" />
+                <Field label="Password *">
+                  <input type="password" value={form.password} onChange={e => set('password', e.target.value)} placeholder="Min 8 chars, uppercase, number, special"
+                    className="w-full h-11 px-3.5 text-sm rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--primary)] placeholder:text-[var(--text-secondary)]/50" />
                   {form.password && (
-                    <div className="flex items-center gap-2 mt-1">
-                      <div className="flex-1 h-1 rounded-full bg-[var(--border)] overflow-hidden">
-                        <div className="h-full rounded-full transition-all" style={{ width: pwStrength.width, background: pwStrength.color }} />
-                      </div>
-                      <span className="text-[11px] font-medium" style={{ color: pwStrength.color }}>{pwStrength.label}</span>
+                    <div className="flex gap-1 mt-1.5">
+                      {[1,2,3].map(i => (
+                        <div key={i} className={`flex-1 h-1 rounded-full ${pwStrength >= i ? (pwStrength === 1 ? 'bg-[var(--danger)]' : pwStrength === 2 ? 'bg-[var(--warning)]' : 'bg-[var(--success)]') : 'bg-[var(--border)]'}`} />
+                      ))}
                     </div>
                   )}
-                  {showPwRules && form.password && pwErrors.length > 0 && (
-                    <ul className="mt-1 flex flex-col gap-0.5">
-                      {pwErrors.map((e, i) => <li key={i} className="text-[11px] text-[var(--danger)] flex items-center gap-1"><span>·</span>{e}</li>)}
-                    </ul>
-                  )}
+                  {form.password && pwErrors.length > 0 && <p className="text-[10px] text-[var(--text-secondary)] mt-1">Need: {pwErrors.join(', ')}</p>}
+                </Field>
+
+                <Field label="Confirm Password *" error={form.confirmPassword && form.password !== form.confirmPassword ? 'Does not match' : ''}>
+                  <input type="password" value={form.confirmPassword} onChange={e => set('confirmPassword', e.target.value)} placeholder="Re-enter password"
+                    className={`w-full h-11 px-3.5 text-sm rounded-lg bg-[var(--bg-secondary)] border text-[var(--text)] outline-none transition-colors placeholder:text-[var(--text-secondary)]/50 ${form.confirmPassword && form.password !== form.confirmPassword ? 'border-[var(--danger)]/50' : 'border-[var(--border)] focus:border-[var(--primary)]'}`} />
+                </Field>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Select label="Gender *" value={form.gender} onChange={e => set('gender', e.target.value)} placeholder="Select" options={['Male', 'Female', 'Non-binary', 'Prefer not to say']} />
+                  <Input label="Date of Birth *" type="date" value={form.dob} onChange={e => set('dob', e.target.value)} max={maxDob} />
                 </div>
 
-                {/* Confirm Password */}
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[13px] font-medium text-[var(--muted)]">Confirm Password *</label>
-                  <input type="password" value={form.confirmPassword} onChange={e => set('confirmPassword', e.target.value)}
-                    placeholder="Re-enter password"
-                    className={`w-full h-[42px] px-3.5 text-sm rounded-[10px] bg-[var(--input)] border text-[var(--text)] outline-none focus:border-[var(--accent)] placeholder:text-[var(--muted)] placeholder:opacity-60 ${form.confirmPassword && form.password !== form.confirmPassword ? 'border-[var(--danger)]' : 'border-[var(--border)]'}`} />
-                  {form.confirmPassword && form.password !== form.confirmPassword && (
-                    <p className="text-[11px] text-[var(--danger)]">Passwords do not match</p>
-                  )}
-                  {form.confirmPassword && form.password === form.confirmPassword && form.password && (
-                    <p className="text-[11px] text-[var(--success)]">✓ Passwords match</p>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-2 gap-2.5">
-                  <SelectDropdown label="Gender *" value={form.gender} onChange={e => set('gender', e.target.value)} placeholder="Select" options={['Male', 'Female', 'Non-binary', 'Prefer not to say']} />
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[13px] font-medium text-[var(--muted)]">Date of birth *</label>
-                    <input type="date" value={form.dob} onChange={e => set('dob', e.target.value)} max={maxDob}
-                      className="w-full h-[42px] px-3.5 text-sm rounded-[10px] bg-[var(--input)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--accent)]" />
-                  </div>
-                </div>
-
-                <Button variant="primary" className="w-full mt-2" onClick={next}>Continue</Button>
+                <Button variant="primary" className="w-full mt-2" onClick={next}>Continue →</Button>
               </motion.div>
             )}
 
-            {/* Step 2: Profile type */}
             {step === 2 && (
-              <motion.div key="2" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} className="flex flex-col gap-4">
-                <p className="text-[13px] text-[var(--muted)] text-center">What best describes you?</p>
+              <motion.div key="2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-5">
+                <p className="text-sm text-[var(--text-secondary)] text-center">What describes you best?</p>
                 <div className="grid grid-cols-2 gap-3">
-                  {[{ v: 'student', l: '🎓 Student', d: 'Currently studying' }, { v: 'professional', l: '💼 Professional', d: 'Working or experienced' }].map(o => (
-                    <button key={o.v} onClick={() => set('user_type', o.v)}
-                      className={`p-5 rounded-[10px] text-center cursor-pointer transition-all border ${form.user_type === o.v ? 'bg-[var(--accent)]/8 border-[var(--accent)] text-[var(--accent)]' : 'bg-[var(--input)] border-[var(--border)] text-[var(--text)]'}`}>
-                      <span className="text-sm font-semibold block">{o.l}</span>
-                      <span className="text-[11px] text-[var(--muted)] block mt-1">{o.d}</span>
+                  {[{ v: 'student', icon: '🎓', l: 'Student', d: 'Currently studying' }, { v: 'professional', icon: '💼', l: 'Professional', d: 'Working / experienced' }].map(o => (
+                    <button key={o.v} onClick={() => set('user_type', o.v)} type="button"
+                      className={`p-5 rounded-xl text-center cursor-pointer transition-all border-2 ${form.user_type === o.v ? 'border-[var(--primary)] bg-[var(--primary)]/5' : 'border-[var(--border)] bg-[var(--bg-secondary)] hover:border-[var(--primary)]/30'}`}>
+                      <span className="text-2xl block mb-2">{o.icon}</span>
+                      <span className="text-sm font-semibold block text-[var(--text)]">{o.l}</span>
+                      <span className="text-[11px] text-[var(--text-secondary)] block mt-0.5">{o.d}</span>
                     </button>
                   ))}
                 </div>
-                <div className="flex gap-2.5 mt-1">
-                  <Button variant="secondary" className="flex-1" onClick={() => setStep(1)}>Back</Button>
-                  <Button variant="primary" className="flex-1" onClick={next}>Continue</Button>
+                <div className="flex gap-3">
+                  <Button variant="secondary" className="flex-1" onClick={back}>← Back</Button>
+                  <Button variant="primary" className="flex-1" onClick={next}>Continue →</Button>
                 </div>
               </motion.div>
             )}
 
-            {/* Step 3: Education / Work */}
             {step === 3 && (
-              <motion.div key="3" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} className="flex flex-col gap-3.5">
+              <motion.div key="3" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
                 {form.user_type === 'student' ? (<>
-                  <CollegeInput value={form.college} onChange={v => set('college', v)} />
-
-                  <SelectDropdown label="Highest Education *" value={form.degree} onChange={e => { set('degree', e.target.value); set('branch', ''); }} placeholder="Select" options={ALL_DEGREES} />
-
-                  {form.degree === 'Other' && (
-                    <InputField label="Enter your degree *" placeholder="e.g. B.Des, LLB, MBBS" value={form.customDegree} onChange={e => set('customDegree', e.target.value)} />
-                  )}
-
-                  <BranchInput degree={form.degree} value={form.branch} onChange={v => set('branch', v)} />
-
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <SelectDropdown label="Year of study *" value={form.year_of_study} onChange={e => set('year_of_study', e.target.value)} placeholder="Select" options={['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year', 'Graduated']} />
-                    <InputField label="Passout Year" placeholder="2025" value={form.passout_year} onChange={e => set('passout_year', e.target.value.replace(/\D/g, '').slice(0, 4))} />
+                  <Field label="College / University *">
+                    <CollegeAutocomplete value={form.college} onChange={v => set('college', v)} />
+                  </Field>
+                  <Select label="Highest Education *" value={form.degree} onChange={e => { set('degree', e.target.value); set('branch', ''); }} placeholder="Select" options={ALL_DEGREES} />
+                  {form.degree === 'Other' && <Input label="Your Degree *" placeholder="e.g. B.Des, LLB" value={form.customDegree} onChange={e => set('customDegree', e.target.value)} />}
+                  <Select label="Branch / Major *" value={form.branch} onChange={e => set('branch', e.target.value)} placeholder={form.degree ? "Select branch" : "Select degree first"} options={DEGREE_BRANCHES[form.degree] || []} disabled={!form.degree || form.degree === 'Other'} />
+                  <div className="grid grid-cols-2 gap-3">
+                    <Select label="Year *" value={form.year_of_study} onChange={e => set('year_of_study', e.target.value)} placeholder="Select" options={['1st Year','2nd Year','3rd Year','4th Year','5th Year','Graduated']} />
+                    <Input label="Passout Year" placeholder="2025" value={form.passout_year} onChange={e => set('passout_year', e.target.value.replace(/\D/g,'').slice(0,4))} />
                   </div>
                 </>) : (<>
-                  <InputField label="Company *" placeholder="Google, TCS, Infosys..." value={form.company} onChange={e => set('company', e.target.value)} />
-                  <InputField label="Designation *" placeholder="Software Engineer" value={form.designation} onChange={e => set('designation', e.target.value)} />
-                  <SelectDropdown label="Experience *" value={form.experience} onChange={e => set('experience', e.target.value)} placeholder="Select" options={['Fresher', '0-1 years', '1-3 years', '3-5 years', '5-10 years', '10+ years']} />
+                  <Input label="Company *" placeholder="Google, TCS..." value={form.company} onChange={e => set('company', e.target.value)} />
+                  <Input label="Designation *" placeholder="Software Engineer" value={form.designation} onChange={e => set('designation', e.target.value)} />
+                  <Select label="Experience *" value={form.experience} onChange={e => set('experience', e.target.value)} placeholder="Select" options={['Fresher','0-1 years','1-3 years','3-5 years','5-10 years','10+ years']} />
                 </>)}
-                <div className="flex gap-2.5 mt-2">
-                  <Button variant="secondary" className="flex-1" onClick={() => setStep(2)}>Back</Button>
-                  <Button variant="primary" className="flex-1" onClick={next}>Continue</Button>
+                <div className="flex gap-3 mt-2">
+                  <Button variant="secondary" className="flex-1" onClick={back}>← Back</Button>
+                  <Button variant="primary" className="flex-1" onClick={next}>Continue →</Button>
                 </div>
               </motion.div>
             )}
 
-            {/* Step 4: Location + Links */}
             {step === 4 && (
-              <motion.div key="4" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} className="flex flex-col gap-3.5">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[13px] font-medium text-[var(--muted)]">Country *</label>
-                  <select value={form.country} onChange={e => set('country', e.target.value)}
-                    className="w-full h-[42px] px-3.5 text-sm rounded-[10px] bg-[var(--input)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--accent)]">
-                    <option value="">Select country</option>
-                    {countries.map(c => <option key={c.code} value={c.name}>{c.flag} {c.name}</option>)}
-                  </select>
+              <motion.div key="4" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
+                <SearchSelect label="Country *" value={form.country} onChange={v => set('country', v)} placeholder="Search country..."
+                  options={countries.map(c => ({ value: c.name, label: `${c.flag} ${c.name}` }))} />
+                <div className="grid grid-cols-2 gap-3">
+                  <SearchSelect label="State *" value={form.state} onChange={v => set('state', v)} placeholder="Select state" options={states} disabled={!states.length} />
+                  <SearchSelect label="City *" value={form.city} onChange={v => set('city', v)} placeholder="Select city" options={cities} disabled={!cities.length} />
                 </div>
-
-                <div className="grid grid-cols-2 gap-2.5">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[13px] font-medium text-[var(--muted)]">State *</label>
-                    <select value={form.state} onChange={e => set('state', e.target.value)}
-                      className="w-full h-[42px] px-3.5 text-sm rounded-[10px] bg-[var(--input)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--accent)]" disabled={!states.length}>
-                      <option value="">{states.length ? 'Select state' : 'Select country first'}</option>
-                      {states.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[13px] font-medium text-[var(--muted)]">City *</label>
-                    <select value={form.city} onChange={e => set('city', e.target.value)}
-                      className="w-full h-[42px] px-3.5 text-sm rounded-[10px] bg-[var(--input)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--accent)]" disabled={!cities.length}>
-                      <option value="">{cities.length ? 'Select city' : 'Select state first'}</option>
-                      {cities.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                </div>
-
-                <InputField label="LinkedIn (optional)" placeholder="https://linkedin.com/in/..." value={form.linkedin} onChange={e => set('linkedin', e.target.value)} />
-                <InputField label="GitHub (optional)" placeholder="https://github.com/..." value={form.github} onChange={e => set('github', e.target.value)} />
-                <InputField label="Portfolio (optional)" placeholder="https://yoursite.com" value={form.portfolio} onChange={e => set('portfolio', e.target.value)} />
-
-                <div className="flex gap-2.5 mt-2">
-                  <Button variant="secondary" className="flex-1" onClick={() => setStep(3)}>Back</Button>
-                  <Button variant="primary" className="flex-1" loading={loading} onClick={submit}>Create account</Button>
+                <Input label="LinkedIn (optional)" placeholder="https://linkedin.com/in/..." value={form.linkedin} onChange={e => set('linkedin', e.target.value)} />
+                <Input label="GitHub (optional)" placeholder="https://github.com/..." value={form.github} onChange={e => set('github', e.target.value)} />
+                <Input label="Portfolio (optional)" placeholder="https://yoursite.com" value={form.portfolio} onChange={e => set('portfolio', e.target.value)} />
+                <div className="flex gap-3 mt-2">
+                  <Button variant="secondary" className="flex-1" onClick={back}>← Back</Button>
+                  <Button variant="primary" className="flex-1" loading={loading} onClick={submit}>Create Account</Button>
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
 
-          <p className="text-center text-xs text-[var(--muted)] mt-6 pt-5 border-t border-[var(--border)]">
-            Have an account? <Link href="/login" className="text-[var(--accent)] no-underline font-medium">Sign in</Link>
+          <p className="text-center text-xs text-[var(--text-secondary)] mt-6 pt-5 border-t border-[var(--border)]">
+            Already have an account? <Link href="/login" className="text-[var(--primary)] no-underline font-medium">Sign in</Link>
           </p>
         </div>
       </FadeIn>
+    </div>
+  );
+}
+
+function CollegeAutocomplete({ value, onChange }) {
+  const [suggestions, setSuggestions] = useState([]);
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (value.length >= 2) api.searchColleges(value).then(setSuggestions).catch(() => setSuggestions([]));
+    else setSuggestions([]);
+  }, [value]);
+
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <input type="text" value={value} onChange={e => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)} placeholder="Type to search..."
+        className="w-full h-11 px-3.5 text-sm rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--primary)] placeholder:text-[var(--text-secondary)]/50" />
+      {open && suggestions.length > 0 && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-xl z-50 max-h-[180px] overflow-y-auto">
+          {suggestions.map((s, i) => (
+            <button key={i} type="button" onClick={() => { onChange(s); setOpen(false); }}
+              className="w-full text-left px-3 py-2 text-sm text-[var(--text)] hover:bg-[var(--bg-secondary)] cursor-pointer">{s}</button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
