@@ -1,10 +1,11 @@
+import 'dotenv/config';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
-import dotenv from 'dotenv';
+
 import db from './db.js';
 import { startEmailScheduler } from './services/scheduler.js';
 import authRoutes from './routes/auth.js';
@@ -19,7 +20,6 @@ import adminRoutes from './routes/admin.js';
 import searchRoutes from './routes/search.js';
 import advancedRoutes from './routes/advanced.js';
 
-dotenv.config();
 const app = express();
 
 // Security headers
@@ -34,8 +34,23 @@ app.use('/api/auth/register', authLimiter);
 app.use('/api/admin/login', authLimiter);
 
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
+
+// XSS sanitization middleware
+app.use((req, res, next) => {
+  if (req.body && typeof req.body === 'object') {
+    const strip = (str) => str.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/javascript:/gi, '');
+    const sanitize = (obj) => {
+      for (const key of Object.keys(obj)) {
+        if (typeof obj[key] === 'string') obj[key] = strip(obj[key]);
+        else if (obj[key] && typeof obj[key] === 'object') sanitize(obj[key]);
+      }
+    };
+    sanitize(req.body);
+  }
+  next();
+});
 
 // Routes
 app.use('/api/auth', authRoutes);

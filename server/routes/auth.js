@@ -13,6 +13,11 @@ router.post('/register', async (req, res) => {
     const { email, password, name, phone, country_code, gender, dob, user_type, college, degree, branch, year_of_study, passout_year, company, designation, experience, skills, preferred_role, city, state, country, linkedin, github, portfolio, stacks } = req.body;
 
     if (!email || !password || !name) return res.status(400).json({ error: 'Name, email, and password required' });
+    // Email validation
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email format' });
+    // Sanitize inputs
+    const cleanName = name.trim().slice(0, 100);
+    const cleanEmail = email.trim().toLowerCase().slice(0, 255);
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
     if (!/[A-Z]/.test(password)) return res.status(400).json({ error: 'Password needs an uppercase letter' });
     if (!/[0-9]/.test(password)) return res.status(400).json({ error: 'Password needs a number' });
@@ -32,7 +37,7 @@ router.post('/register', async (req, res) => {
     const hash = await bcrypt.hash(password, 12);
     const result = db.prepare(
       `INSERT INTO users (email,password,name,phone,country_code,gender,dob,user_type,college,degree,branch,year_of_study,passout_year,company,designation,experience,skills,preferred_role,city,state,country,linkedin,github,portfolio) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).run(email, hash, name, phone||null, country_code||'+91', gender||null, dob||null, user_type||null, college||null, degree||null, branch||null, year_of_study||null, passout_year||null, company||null, designation||null, experience||null, skills||null, preferred_role||null, city||null, state||null, country||'India', linkedin||null, github||null, portfolio||null);
+    ).run(cleanEmail, hash, cleanName, phone||null, country_code||'+91', gender||null, dob||null, user_type||null, college||null, degree||null, branch||null, year_of_study||null, passout_year||null, company||null, designation||null, experience||null, skills||null, preferred_role||null, city||null, state||null, country||'India', linkedin||null, github||null, portfolio||null);
 
     const userId = result.lastInsertRowid;
 
@@ -46,8 +51,8 @@ router.post('/register', async (req, res) => {
     }
 
     logAudit(userId, 'REGISTER', 'user', userId, { email }, req.ip);
-    const token = jwt.sign({ id: userId, email, name }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    res.cookie('token', token, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: 'lax' });
+    const token = jwt.sign({ id: userId, email: cleanEmail, name: cleanName }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    res.cookie('token', token, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
     res.json({ user: { id: userId, email, name } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -64,7 +69,7 @@ router.post('/login', async (req, res) => {
 
     logAudit(user.id, 'LOGIN', 'user', user.id, null, req.ip);
     const token = jwt.sign({ id: user.id, email: user.email, name: user.name }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    res.cookie('token', token, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: 'lax' });
+    res.cookie('token', token, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
     res.json({ user: { id: user.id, email: user.email, name: user.name } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

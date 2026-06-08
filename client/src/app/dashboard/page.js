@@ -39,6 +39,8 @@ export default function Dashboard() {
   const [apps, setApps] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [searchFocused, setSearchFocused] = useState(false);
   const [streak, setStreak] = useState(null);
   const [weeklyReport, setWeeklyReport] = useState(null);
 
@@ -61,7 +63,15 @@ export default function Dashboard() {
     api.weeklyReport().then(setWeeklyReport).catch(() => {});
   };
 
-  useEffect(() => { if (user) loadApps(); }, [search]);
+  useEffect(() => {
+    if (!user) return;
+    loadApps();
+    if (search.length >= 1) {
+      api.search(search).then(setSearchResults).catch(() => setSearchResults(null));
+    } else {
+      setSearchResults(null);
+    }
+  }, [search]);
 
   const handleLogout = async () => { await api.logout(); router.push('/login'); };
 
@@ -136,10 +146,48 @@ export default function Dashboard() {
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] text-sm">🔍</span>
               <input
                 className="w-full h-10 pl-9 pr-4 text-sm rounded-xl bg-[var(--input)] border border-[var(--border)] text-[var(--text)] outline-none focus:border-[var(--primary)] placeholder:text-[var(--text-secondary)] transition-colors"
-                placeholder="Search applications..."
+                placeholder="Search everything..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => setTimeout(() => setSearchFocused(false), 200)}
               />
+              {searchFocused && searchResults && (searchResults.applications?.length > 0 || searchResults.emails?.length > 0 || searchResults.resumes?.length > 0) && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-lg z-50 max-h-[320px] overflow-y-auto p-2">
+                  {searchResults.applications?.length > 0 && (
+                    <div className="mb-2">
+                      <p className="text-[10px] font-semibold text-[var(--text-secondary)] px-2 py-1 uppercase">Applications ({searchResults.applications.length})</p>
+                      {searchResults.applications.map(a => (
+                        <button key={a.id} onClick={() => { setSearch(''); setActiveTab('board'); }} className="w-full text-left px-3 py-2 rounded-lg hover:bg-[var(--bg-secondary)] cursor-pointer transition-colors">
+                          <p className="text-sm font-medium">{a.company}</p>
+                          <p className="text-[11px] text-[var(--text-secondary)]">{a.role} • {a.status}</p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {searchResults.emails?.length > 0 && (
+                    <div className="mb-2">
+                      <p className="text-[10px] font-semibold text-[var(--text-secondary)] px-2 py-1 uppercase">Emails ({searchResults.emails.length})</p>
+                      {searchResults.emails.map(e => (
+                        <button key={e.id} onClick={() => { setSearch(''); setActiveTab('email'); }} className="w-full text-left px-3 py-2 rounded-lg hover:bg-[var(--bg-secondary)] cursor-pointer transition-colors">
+                          <p className="text-sm font-medium">{e.subject || 'No subject'}</p>
+                          <p className="text-[11px] text-[var(--text-secondary)]">{e.classification}</p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {searchResults.resumes?.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-semibold text-[var(--text-secondary)] px-2 py-1 uppercase">Resumes ({searchResults.resumes.length})</p>
+                      {searchResults.resumes.map(r => (
+                        <button key={r.id} onClick={() => { setSearch(''); setActiveTab('resume'); }} className="w-full text-left px-3 py-2 rounded-lg hover:bg-[var(--bg-secondary)] cursor-pointer transition-colors">
+                          <p className="text-sm font-medium">{r.filename}</p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-3">

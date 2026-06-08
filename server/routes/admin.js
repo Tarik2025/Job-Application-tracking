@@ -1,5 +1,3 @@
-import dotenv from 'dotenv';
-dotenv.config();
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';

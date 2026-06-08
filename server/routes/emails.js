@@ -85,6 +85,10 @@ router.get('/accounts', (req, res) => {
 router.post('/accounts', (req, res) => {
   const { email, password, host, port, label } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and app password required' });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email format' });
+  // Limit accounts per user
+  const accountCount = db.prepare('SELECT COUNT(*) as c FROM email_accounts WHERE user_id=?').get(req.user.id).c;
+  if (accountCount >= 5) return res.status(400).json({ error: 'Maximum 5 email accounts allowed' });
   const r = db.prepare('INSERT INTO email_accounts (user_id,email,password,host,port,label) VALUES (?,?,?,?,?,?)').run(req.user.id, email, password, host||'imap.gmail.com', port||993, label||null);
   res.json({ id: r.lastInsertRowid, message: 'Connected' });
 });
