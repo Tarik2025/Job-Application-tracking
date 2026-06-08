@@ -9,7 +9,7 @@ async function request(path, options = {}) {
   if (res.headers.get('content-type')?.includes('text/csv')) return res;
   const data = await res.json();
   if (!res.ok) {
-    if (res.status === 401 && typeof window !== 'undefined' && !path.includes('/auth/login')) {
+    if (res.status === 401 && typeof window !== 'undefined' && !path.includes('/auth/login') && !path.includes('/admin/')) {
       window.location.href = '/login';
     }
     throw new Error(data.error || 'Request failed');
