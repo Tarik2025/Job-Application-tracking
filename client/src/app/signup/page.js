@@ -187,13 +187,14 @@ export default function SignupPage() {
 
   // Real-time email check
   useEffect(() => {
-    if (!form.email || !/\S+@\S+\.\S+/.test(form.email)) { setEmailExists(false); return; }
+    if (!form.email || !/\\S+@\\S+\\.\\S+/.test(form.email)) { setEmailExists(false); return; }
     const timer = setTimeout(() => {
       setEmailChecking(true);
-      api.login({ email: form.email, password: '___check___' })
-        .catch(err => { setEmailExists(err.message === 'Invalid credentials' || err.message === 'Account deactivated'); })
+      api.checkEmail(form.email)
+        .then(d => setEmailExists(d.exists))
+        .catch(() => setEmailExists(false))
         .finally(() => setEmailChecking(false));
-    }, 800);
+    }, 600);
     return () => clearTimeout(timer);
   }, [form.email]);
 

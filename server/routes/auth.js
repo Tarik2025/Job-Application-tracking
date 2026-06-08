@@ -169,4 +169,13 @@ router.post('/reset-password', async (req, res) => {
   } catch { res.status(400).json({ error: 'Invalid or expired token' }); }
 });
 
+
+// Check if email exists (for signup validation)
+router.post('/check-email', (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.json({ exists: false });
+  const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email.trim().toLowerCase());
+  res.json({ exists: !!user });
+});
+
 export default router;
