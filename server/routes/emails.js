@@ -3,25 +3,27 @@ import db from '../db.js';
 import { auth } from '../middleware/auth.js';
 import { classifyEmail } from '../services/gemini.js';
 import { fetchAllAccounts } from '../services/emailFetcher.js';
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
+import { createCipheriv, randomBytes, scryptSync } from 'crypto';
 
 const router = Router();
+
+// CSRF mitigation: reject state-changing requests without JSON content-type
+router.use((req, res, next) => {
+  if (['POST','PUT','PATCH','DELETE'].includes(req.method)) {
+    const ct = String(req.headers['content-type'] || '');
+    if (!ct.includes('application/json')) return res.status(415).json({ error: 'Content-Type must be application/json' });
+  }
+  next();
+});
+
 router.use(auth);
 
-// Encrypt/decrypt IMAP passwords at rest using AES-256-CBC
-// ENCRYPTION_KEY is separate from JWT_SECRET so rotating JWT never breaks stored passwords
-const ENC_KEY = scryptSync(process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || 'fallback', 'cc-imap-salt-v1', 32);
+// ENCRYPTION_KEY is validated at startup in index.js — safe to use directly here
+const ENC_KEY = scryptSync(process.env.ENCRYPTION_KEY, 'cc-imap-salt-v1', 32);
 function encrypt(text) {
   const iv = randomBytes(16);
   const cipher = createCipheriv('aes-256-cbc', ENC_KEY, iv);
   return iv.toString('hex') + ':' + cipher.update(text, 'utf8', 'hex') + cipher.final('hex');
-}
-function decrypt(enc) {
-  try {
-    const [ivHex, data] = enc.split(':');
-    const decipher = createDecipheriv('aes-256-cbc', ENC_KEY, Buffer.from(ivHex, 'hex'));
-    return decipher.update(data, 'hex', 'utf8') + decipher.final('utf8');
-  } catch { return enc; } // fallback for legacy plaintext passwords
 }
 
 // List classified emails (paginated, no body in list view)
@@ -51,17 +53,25 @@ router.post('/classify', async (req, res) => {
         clearTimeout(timer);
         if (cbRes.ok) {
           const suggestions = await cbRes.json();
-          if (suggestions.length > 0) {
-            classification.company = suggestions[0].name;
-            classification.company_domain = suggestions[0].domain;
-            classification.company_logo = suggestions[0].logo;
+          if (Array.isArray(suggestions) && suggestions.length > 0) {
+            const top = suggestions[0];
+            // Validate Clearbit response fields before storing
+            if (typeof top.name === 'string' && top.name.length <= 500) {
+              classification.company = top.name;
+            }
+            if (typeof top.domain === 'string' && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(top.domain)) {
+              classification.company_domain = top.domain;
+            }
+            if (typeof top.logo === 'string' && top.logo.startsWith('https://')) {
+              classification.company_logo = top.logo;
+            }
           }
         }
       } catch {}
     }
 
     classification.received_date = received_date || null;
-    const r = db.prepare('INSERT INTO emails (user_id,application_id,subject,from_address,body,classification,extracted_data,received_at) VALUES (?,?,?,?,?,?,?,?)').run(req.user.id, null, subject||null, null, body, classification.classification, JSON.stringify(classification), received_date||null);
+    const r = db.prepare('INSERT INTO emails (user_id,application_id,subject,from_address,body,classification,extracted_data,received_at,imap_uid) VALUES (?,?,?,?,?,?,?,?,?)').run(req.user.id, null, subject||null, null, body, classification.classification, JSON.stringify(classification), received_date||null, null);
     res.json({ id: r.lastInsertRowid, classification, applicationId: null, action: null });
   } catch (err) { console.error('POST /classify:', err); res.status(500).json({ error: 'Internal server error' }); }
 });
@@ -69,8 +79,11 @@ router.post('/classify', async (req, res) => {
 // Confirm and add to applications after classification
 router.post('/classify/confirm', async (req, res) => {
   try {
-    const { company, role, status, received_date, email_id } = req.body;
+    const { company, role, received_date, email_id } = req.body;
+    const status = req.body.status || null;
     if (!company) return res.status(400).json({ error: 'Company required' });
+    const VALID_STATUSES = ['applied','under_review','interview','offer','rejected','withdrawn'];
+    if (status !== null && !VALID_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status value' });
 
     const appliedDate = received_date || new Date().toISOString();
     let applicationId = null;
@@ -111,16 +124,23 @@ router.get('/accounts', (req, res) => {
 });
 
 router.post('/accounts', (req, res) => {
-  const { email, password, host, port, label } = req.body;
+  const { password, host, port, label } = req.body;
+  const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const cleanHost = typeof host === 'string' ? host.trim().toLowerCase() : 'imap.gmail.com';
   if (!email || !password) return res.status(400).json({ error: 'Email and app password required' });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email format' });
+  if (!/^[a-z0-9.-]+$/.test(cleanHost)) return res.status(400).json({ error: 'Invalid IMAP host' });
+  const ALLOWED_PORTS = [993, 143, 465, 587];
+  const parsedPort = parseInt(port);
+  if (port !== undefined && (isNaN(parsedPort) || !ALLOWED_PORTS.includes(parsedPort))) return res.status(400).json({ error: `Invalid port. Allowed: ${ALLOWED_PORTS.join(', ')}` });
+  const safePort = ALLOWED_PORTS.includes(parsedPort) ? parsedPort : 993;
   // Limit accounts per user
   const accountCount = db.prepare('SELECT COUNT(*) as c FROM email_accounts WHERE user_id=?').get(req.user.id).c;
   if (accountCount >= 5) return res.status(400).json({ error: 'Maximum 5 email accounts allowed' });
   // Check duplicate before insert for a clear error message
   const existing = db.prepare('SELECT id FROM email_accounts WHERE user_id=? AND email=?').get(req.user.id, email);
   if (existing) return res.status(409).json({ error: 'This email account is already connected' });
-  const r = db.prepare('INSERT INTO email_accounts (user_id,email,password,host,port,label) VALUES (?,?,?,?,?,?)').run(req.user.id, email, encrypt(password), host||'imap.gmail.com', port||993, label||null);
+  const r = db.prepare('INSERT INTO email_accounts (user_id,email,password,host,port,label) VALUES (?,?,?,?,?,?)').run(req.user.id, email, encrypt(password), cleanHost, safePort, label||null);
   res.json({ id: r.lastInsertRowid, message: 'Connected' });
 });
 

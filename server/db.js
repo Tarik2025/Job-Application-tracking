@@ -1,3 +1,4 @@
+// @ts-nocheck
 import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -288,8 +289,10 @@ db.exec(`
 
   -- Follow-ups
   -- sent constrained to boolean 0/1
-  -- NOTE: No route currently uses this table. Kept for future wiring.
-  -- To remove: DROP TABLE follow_ups (add as a migration when confirmed unused)
+  -- NOTE: This table is intentionally unused (no routes wire to it).
+  -- It is kept as dead schema for potential future use.
+  -- To remove cleanly: add a migration `DROP TABLE IF EXISTS follow_ups`
+  -- and remove the two indexes below once confirmed safe to drop.
   CREATE TABLE IF NOT EXISTS follow_ups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     application_id INTEGER NOT NULL,
@@ -452,7 +455,7 @@ for (const sql of migrations) {
     // Only ignore "duplicate column name" and "already exists" — rethrow everything else
     const msg = err.message || '';
     if (!msg.includes('duplicate column name') && !msg.includes('already exists')) {
-      console.error('Migration failed (non-ignorable):', sql, err.message);
+      throw new Error(`Migration failed: ${sql} — ${msg}`);
     }
   }
 }

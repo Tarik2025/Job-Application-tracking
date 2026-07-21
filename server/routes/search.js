@@ -3,11 +3,22 @@ import db from '../db.js';
 import { auth } from '../middleware/auth.js';
 
 const router = Router();
+
+// CSRF mitigation: reject state-changing requests without JSON content-type
+router.use((req, res, next) => {
+  if (['POST','PUT','PATCH','DELETE'].includes(req.method)) {
+    const ct = String(req.headers['content-type'] || '');
+    if (!ct.includes('application/json')) return res.status(415).json({ error: 'Content-Type must be application/json' });
+  }
+  next();
+});
+
 router.use(auth);
 
 router.get('/', (req, res) => {
-  const { q } = req.query;
-  if (!q || q.length < 1) return res.status(400).json({ error: 'Query required' });
+  const raw = req.query.q;
+  const q = Array.isArray(raw) ? raw[0] : raw;
+  if (!q || typeof q !== 'string' || q.length < 2) return res.status(400).json({ error: 'Query must be at least 2 characters' });
 
   const uid = req.user.id;
   const pattern = `%${q}%`;

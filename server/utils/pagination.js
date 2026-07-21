@@ -7,8 +7,10 @@ export function paginate(query) {
 
 export function buildSort(query, allowedFields, defaultField = 'created_at', defaultDir = 'DESC') {
   const field = allowedFields.includes(query.sort_by) ? query.sort_by : defaultField;
-  const dir = query.sort_dir?.toUpperCase() === 'ASC' ? 'ASC' : defaultDir;
-  return `${field} ${dir}`;
+  const dir = query.sort_dir?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+  // Returns a safe SQL fragment — field is validated against allowedFields whitelist,
+  // dir is constrained to 'ASC' or 'DESC'. Neither can contain user-controlled SQL.
+  return { field, dir, sql: `${field} ${dir}` };
 }
 
 export function paginatedResponse(rows, total, page, limit) {

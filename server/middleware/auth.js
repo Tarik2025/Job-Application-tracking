@@ -1,11 +1,10 @@
 import jwt from 'jsonwebtoken';
 import db from '../db.js';
-
 export function auth(req, res, next) {
   const token = req.cookies?.token || req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Not authenticated' });
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     // Verify token_version matches DB — invalidates tokens after logout/password change
     const row = db.prepare('SELECT token_version, is_active FROM users WHERE id = ?').get(payload.id);
     if (!row) return res.status(401).json({ error: 'Invalid token' });
@@ -14,7 +13,8 @@ export function auth(req, res, next) {
     // Refresh token if less than 1 day left
     const now = Math.floor(Date.now() / 1000);
     if (payload.exp - now < 86400) {
-      const newToken = jwt.sign({ id: payload.id, email: payload.email, name: payload.name, tv: payload.tv }, process.env.JWT_SECRET, { expiresIn: '7d' });
+      // Re-read tv from DB so refresh always embeds the current version
+      const newToken = jwt.sign({ id: payload.id, email: payload.email, name: payload.name, tv: row.token_version }, process.env.JWT_SECRET, { expiresIn: '7d' });
       res.cookie('token', newToken, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
     }
     req.user = payload;

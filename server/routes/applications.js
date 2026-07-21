@@ -1,10 +1,21 @@
 import { Router } from 'express';
 import db, { logAudit } from '../db.js';
 import { auth } from '../middleware/auth.js';
+import { doubleCsrfProtection } from '../middleware/csrf.js';
 import { predictStatus, generateFollowUp } from '../services/gemini.js';
 import { paginate, buildSort, paginatedResponse } from '../utils/pagination.js';
 
 const router = Router();
+
+// CSRF mitigation: reject state-changing requests without JSON content-type
+router.use((req, res, next) => {
+  if (['POST','PUT','PATCH','DELETE'].includes(req.method)) {
+    const ct = String(req.headers['content-type'] || '');
+    if (!ct.includes('application/json')) return res.status(415).json({ error: 'Content-Type must be application/json' });
+  }
+  next();
+});
+
 router.use(auth);
 
 const SORT_FIELDS = ['applied_date', 'last_updated', 'company', 'role', 'status', 'priority', 'response_date'];
@@ -12,7 +23,7 @@ const SORT_FIELDS = ['applied_date', 'last_updated', 'company', 'role', 'status'
 // ===== LIST (paginated, filtered, sorted, with days_since) =====
 router.get('/', (req, res) => {
   const { page, limit, offset } = paginate(req.query);
-  const sort = buildSort(req.query, SORT_FIELDS, 'applied_date', 'DESC');
+  const { sql: sort } = buildSort(req.query, SORT_FIELDS, 'applied_date', 'DESC');
   const { status, company, platform, priority, search, tag, work_mode, days_min, days_max } = req.query;
 
   let where = 'WHERE a.user_id = ?';
@@ -53,7 +64,9 @@ router.get('/', (req, res) => {
 
 // ===== GET SINGLE (with full history, notes, tags) =====
 router.get('/:id', (req, res) => {
-  const app = db.prepare('SELECT * FROM applications WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
+  const id = parseInt(req.params.id);
+  if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid id' });
+  const app = db.prepare('SELECT * FROM applications WHERE id=? AND user_id=?').get(id, req.user.id);
   if (!app) return res.status(404).json({ error: 'Not found' });
 
   const today = new Date(); today.setHours(0,0,0,0);
@@ -68,7 +81,7 @@ router.get('/:id', (req, res) => {
 });
 
 // ===== CREATE (with duplicate check, wrapped in transaction) =====
-router.post('/', (req, res) => {
+router.post('/', doubleCsrfProtection, (req, res) => {
   const { company, role, status, platform, job_url, job_description, salary_expected, salary_offered, location, work_mode, contact_person, contact_email, notes, priority, tags } = req.body;
   if (!company || !role) return res.status(400).json({ error: 'Company and role required' });
 
@@ -110,8 +123,10 @@ router.post('/', (req, res) => {
 });
 
 // ===== UPDATE (with status history tracking, wrapped in transaction) =====
-router.put('/:id', (req, res) => {
-  const app = db.prepare('SELECT * FROM applications WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
+router.put('/:id', doubleCsrfProtection, (req, res) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid id' });
+  const app = db.prepare('SELECT * FROM applications WHERE id=? AND user_id=?').get(id, req.user.id);
   if (!app) return res.status(404).json({ error: 'Not found' });
 
   const fields = ['company','role','status','platform','job_url','job_description','salary_expected','salary_offered','location','work_mode','contact_person','contact_email','notes','priority'];
@@ -129,7 +144,7 @@ router.put('/:id', (req, res) => {
         }
       }
       updates.push('last_updated = CURRENT_TIMESTAMP');
-      values.push(req.params.id);
+      values.push(id);
       db.prepare(`UPDATE applications SET ${updates.join(', ')} WHERE id = ?`).run(...values);
     }
 
@@ -146,8 +161,8 @@ router.put('/:id', (req, res) => {
 
   try {
     updateApp();
-    logAudit(req.user.id, 'UPDATE', 'application', Number(req.params.id), req.body, req.ip);
-    res.json(db.prepare('SELECT * FROM applications WHERE id=?').get(req.params.id));
+    logAudit(req.user.id, 'UPDATE', 'application', id, req.body, req.ip);
+    res.json(db.prepare('SELECT * FROM applications WHERE id=?').get(id));
   } catch (err) {
     console.error('PUT /applications/:id:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -155,19 +170,24 @@ router.put('/:id', (req, res) => {
 });
 
 // ===== DELETE =====
-router.delete('/:id', (req, res) => {
-  const app = db.prepare('SELECT * FROM applications WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
+router.delete('/:id', doubleCsrfProtection, (req, res) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id) || id < 1) return res.status(400).json({ error: 'Invalid id' });
+  const app = db.prepare('SELECT * FROM applications WHERE id=? AND user_id=?').get(id, req.user.id);
   if (!app) return res.status(404).json({ error: 'Not found' });
-  db.prepare('DELETE FROM applications WHERE id=?').run(req.params.id);
-  logAudit(req.user.id, 'DELETE', 'application', Number(req.params.id), { company: app.company, role: app.role }, req.ip);
+  db.prepare('DELETE FROM applications WHERE id=?').run(id);
+  logAudit(req.user.id, 'DELETE', 'application', id, { company: app.company, role: app.role }, req.ip);
   res.json({ message: 'Deleted' });
 });
 
 // ===== BULK OPS =====
-router.patch('/bulk/status', (req, res) => {
+router.patch('/bulk/status', doubleCsrfProtection, (req, res) => {
   const { ids, status } = req.body;
   if (!ids?.length || !status) return res.status(400).json({ error: 'ids and status required' });
   if (ids.length > 100) return res.status(400).json({ error: 'Max 100 ids per bulk operation' });
+  if (!ids.every(id => Number.isInteger(id) && id > 0)) return res.status(400).json({ error: 'All ids must be positive integers' });
+  const VALID_STATUSES = ['applied','under_review','interview','offer','rejected','withdrawn'];
+  if (!VALID_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status value' });
   const stmt = db.prepare('UPDATE applications SET status=?, last_updated=CURRENT_TIMESTAMP WHERE id=? AND user_id=?');
   const hist = db.prepare('INSERT INTO status_history (application_id,user_id,from_status,to_status,note) VALUES (?,?,?,?,?)');
   let updated = 0;
@@ -181,10 +201,11 @@ router.patch('/bulk/status', (req, res) => {
   res.json({ updated });
 });
 
-router.post('/bulk/delete', (req, res) => {
+router.post('/bulk/delete', doubleCsrfProtection, (req, res) => {
   const { ids } = req.body;
   if (!ids?.length) return res.status(400).json({ error: 'ids required' });
   if (ids.length > 100) return res.status(400).json({ error: 'Max 100 ids per bulk operation' });
+  if (!ids.every(id => Number.isInteger(id) && id > 0)) return res.status(400).json({ error: 'All ids must be positive integers' });
   const stmt = db.prepare('DELETE FROM applications WHERE id=? AND user_id=?');
   let deleted = 0;
   db.transaction(() => {
@@ -195,7 +216,7 @@ router.post('/bulk/delete', (req, res) => {
 });
 
 // ===== ADD NOTE =====
-router.post('/:id/notes', (req, res) => {
+router.post('/:id/notes', doubleCsrfProtection, (req, res) => {
   const app = db.prepare('SELECT id FROM applications WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!app) return res.status(404).json({ error: 'Not found' });
   const { content } = req.body;
@@ -209,14 +230,14 @@ router.get('/tags/list', (req, res) => {
   res.json(db.prepare('SELECT * FROM tags WHERE user_id=? ORDER BY name').all(req.user.id));
 });
 
-router.post('/tags', (req, res) => {
+router.post('/tags', doubleCsrfProtection, (req, res) => {
   const { name, color } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
   db.prepare('INSERT OR IGNORE INTO tags (user_id,name,color) VALUES (?,?,?)').run(req.user.id, name.trim(), color||'#6366f1');
   res.json({ message: 'Created' });
 });
 
-router.delete('/tags/:id', (req, res) => {
+router.delete('/tags/:id', doubleCsrfProtection, (req, res) => {
   db.prepare('DELETE FROM tags WHERE id=? AND user_id=?').run(req.params.id, req.user.id);
   res.json({ message: 'Deleted' });
 });
@@ -229,7 +250,7 @@ router.get('/reminders/list', (req, res) => {
   res.json(db.prepare(`SELECT r.*,a.company,a.role FROM reminders r LEFT JOIN applications a ON r.application_id=a.id ${where} ORDER BY r.remind_at ASC`).all(req.user.id));
 });
 
-router.post('/reminders', (req, res) => {
+router.post('/reminders', doubleCsrfProtection, (req, res) => {
   const { application_id, title, remind_at } = req.body;
   if (!title || !remind_at) return res.status(400).json({ error: 'Title and remind_at required' });
   if (isNaN(new Date(remind_at).getTime())) return res.status(400).json({ error: 'Invalid remind_at date' });
@@ -237,12 +258,12 @@ router.post('/reminders', (req, res) => {
   res.json({ id: r.lastInsertRowid });
 });
 
-router.patch('/reminders/:id/done', (req, res) => {
+router.patch('/reminders/:id/done', doubleCsrfProtection, (req, res) => {
   db.prepare('UPDATE reminders SET is_done=1 WHERE id=? AND user_id=?').run(req.params.id, req.user.id);
   res.json({ message: 'Done' });
 });
 
-router.delete('/reminders/:id', (req, res) => {
+router.delete('/reminders/:id', doubleCsrfProtection, (req, res) => {
   db.prepare('DELETE FROM reminders WHERE id=? AND user_id=?').run(req.params.id, req.user.id);
   res.json({ message: 'Deleted' });
 });

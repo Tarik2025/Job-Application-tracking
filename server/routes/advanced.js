@@ -1,9 +1,19 @@
 import { Router } from 'express';
 import db, { logActivity } from '../db.js';
 import { auth } from '../middleware/auth.js';
+import { doubleCsrfProtection } from '../middleware/csrf.js';
 import { paginate, paginatedResponse } from '../utils/pagination.js';
 
 const router = Router();
+
+router.use((req, res, next) => {
+  if (['POST','PUT','PATCH','DELETE'].includes(req.method)) {
+    const ct = String(req.headers['content-type'] || '');
+    if (!ct.includes('application/json')) return res.status(415).json({ error: 'Content-Type must be application/json' });
+  }
+  next();
+});
+
 router.use(auth);
 
 // ===== APPLICATION SCORING =====
@@ -31,7 +41,7 @@ router.get('/scores', (req, res) => {
 });
 
 // Persist scores — call after GET /scores when you want to save computed values
-router.post('/scores/sync', (req, res) => {
+router.post('/scores/sync', doubleCsrfProtection, (req, res) => {
   const apps = db.prepare('SELECT id,priority,job_description,contact_person,contact_email,notes,response_date,applied_date FROM applications WHERE user_id=?').all(req.user.id);
   const taggedIds = new Set(
     db.prepare('SELECT DISTINCT application_id FROM application_tags WHERE application_id IN (SELECT id FROM applications WHERE user_id=?)').all(req.user.id).map(r => r.application_id)
@@ -97,7 +107,7 @@ router.get('/blacklist', (req, res) => {
   res.json(db.prepare('SELECT * FROM blacklist WHERE user_id=? ORDER BY created_at DESC').all(req.user.id));
 });
 
-router.post('/blacklist', (req, res) => {
+router.post('/blacklist', doubleCsrfProtection, (req, res) => {
   const { company, reason } = req.body;
   if (!company) return res.status(400).json({ error: 'Company required' });
   db.prepare('INSERT OR IGNORE INTO blacklist (user_id,company,reason) VALUES (?,?,?)').run(req.user.id, company, reason || null);
@@ -105,7 +115,7 @@ router.post('/blacklist', (req, res) => {
   res.json({ message: 'Blacklisted' });
 });
 
-router.delete('/blacklist/:id', (req, res) => {
+router.delete('/blacklist/:id', doubleCsrfProtection, (req, res) => {
   db.prepare('DELETE FROM blacklist WHERE id=? AND user_id=?').run(req.params.id, req.user.id);
   res.json({ message: 'Removed' });
 });
@@ -114,6 +124,7 @@ router.delete('/blacklist/:id', (req, res) => {
 router.get('/blacklist/check', (req, res) => {
   const { company } = req.query;
   if (!company) return res.json({ blacklisted: false });
+  if (company.length > 200) return res.status(400).json({ error: 'Query too long' });
   const found = db.prepare('SELECT * FROM blacklist WHERE user_id=? AND company LIKE ?').get(req.user.id, `%${company}%`);
   res.json({ blacklisted: !!found, entry: found || null });
 });
@@ -140,9 +151,10 @@ router.get('/interviews', (req, res) => {
   res.json(db.prepare(query).all(req.user.id));
 });
 
-router.post('/interviews', (req, res) => {
+router.post('/interviews', doubleCsrfProtection, (req, res) => {
   const { application_id, round_name, interview_date, interview_type, interviewer, meeting_link, notes } = req.body;
   if (!application_id || !round_name || !interview_date) return res.status(400).json({ error: 'application_id, round_name, interview_date required' });
+  if (isNaN(new Date(interview_date).getTime())) return res.status(400).json({ error: 'Invalid interview_date' });
 
   const app = db.prepare('SELECT * FROM applications WHERE id=? AND user_id=?').get(application_id, req.user.id);
   if (!app) return res.status(404).json({ error: 'Application not found' });
@@ -158,7 +170,7 @@ router.post('/interviews', (req, res) => {
   res.json({ id: r.lastInsertRowid });
 });
 
-router.put('/interviews/:id', (req, res) => {
+router.put('/interviews/:id', doubleCsrfProtection, (req, res) => {
   const { outcome, notes, interview_date, meeting_link } = req.body;
   const interview = db.prepare('SELECT * FROM interviews WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!interview) return res.status(404).json({ error: 'Not found' });
@@ -190,7 +202,7 @@ router.get('/documents', (req, res) => {
   res.json(db.prepare(q).all(...p));
 });
 
-router.post('/documents', (req, res) => {
+router.post('/documents', doubleCsrfProtection, (req, res) => {
   const { application_id, doc_type, title, content } = req.body;
   if (!title) return res.status(400).json({ error: 'Title required' });
   const r = db.prepare('INSERT INTO documents (application_id,user_id,doc_type,title,content) VALUES (?,?,?,?,?)').run(application_id||null, req.user.id, doc_type||'other', title, content||null);
@@ -198,7 +210,7 @@ router.post('/documents', (req, res) => {
   res.json({ id: r.lastInsertRowid });
 });
 
-router.delete('/documents/:id', (req, res) => {
+router.delete('/documents/:id', doubleCsrfProtection, (req, res) => {
   db.prepare('DELETE FROM documents WHERE id=? AND user_id=?').run(req.params.id, req.user.id);
   res.json({ message: 'Deleted' });
 });
@@ -221,7 +233,7 @@ router.get('/goals', (req, res) => {
       if (g.start_date) { where += ' AND applied_date >= ?'; p.push(g.start_date); }
       if (g.end_date) { where += ' AND applied_date <= ?'; p.push(g.end_date); }
       const count = db.prepare(`SELECT COUNT(*) as c FROM applications ${where}`).get(...p).c;
-      return { ...g, current_count: count, is_completed: count >= g.target_count ? 1 : 0, progress: Math.min(Math.round((count / g.target_count) * 100), 100) };
+      return { ...g, current_count: count, is_completed: count >= g.target_count ? 1 : 0, progress: g.target_count > 0 ? Math.min(Math.round((count / g.target_count) * 100), 100) : 0 };
     }
     if (g.goal_type === 'interviews') {
       let q = 'SELECT COUNT(*) as c FROM interviews WHERE user_id=?';
@@ -229,15 +241,15 @@ router.get('/goals', (req, res) => {
       if (g.start_date) { q += ' AND interview_date >= ?'; p.push(g.start_date); }
       if (g.end_date) { q += ' AND interview_date <= ?'; p.push(g.end_date + ' 23:59:59'); }
       const count = db.prepare(q).get(...p).c;
-      return { ...g, current_count: count, is_completed: count >= g.target_count ? 1 : 0, progress: Math.min(Math.round((count / g.target_count) * 100), 100) };
+      return { ...g, current_count: count, is_completed: count >= g.target_count ? 1 : 0, progress: g.target_count > 0 ? Math.min(Math.round((count / g.target_count) * 100), 100) : 0 };
     }
-    return { ...g, progress: Math.min(Math.round((g.current_count / g.target_count) * 100), 100) };
+    return { ...g, progress: g.target_count > 0 ? Math.min(Math.round((g.current_count / g.target_count) * 100), 100) : 0 };
   });
   res.json(enriched);
 });
 
 // Persist goal progress — call after GET /goals when you want to save computed counts
-router.post('/goals/sync', (req, res) => {
+router.post('/goals/sync', doubleCsrfProtection, (req, res) => {
   const goals = db.prepare('SELECT * FROM goals WHERE user_id=? ORDER BY created_at DESC').all(req.user.id);
   const updateGoal = db.prepare('UPDATE goals SET current_count=?, is_completed=? WHERE id=? AND (current_count!=? OR is_completed!=?)');
   db.transaction(() => {
@@ -263,9 +275,11 @@ router.post('/goals/sync', (req, res) => {
   res.json({ message: 'Goals synced' });
 });
 
-router.post('/goals', (req, res) => {
+router.post('/goals', doubleCsrfProtection, (req, res) => {
   const { title, target_count, period, start_date, end_date, goal_type } = req.body;
   if (!title || !target_count) return res.status(400).json({ error: 'Title and target required' });
+  const parsedTarget = parseInt(target_count);
+  if (!Number.isInteger(parsedTarget) || parsedTarget < 1) return res.status(400).json({ error: 'target_count must be a positive integer' });
 
   const start = start_date || new Date().toISOString().split('T')[0];
   let end = end_date;
@@ -273,12 +287,12 @@ router.post('/goals', (req, res) => {
   if (!end && period === 'weekly') end = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
   if (!end && period === 'monthly') end = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
 
-  const r = db.prepare('INSERT INTO goals (user_id,title,goal_type,target_count,period,start_date,end_date) VALUES (?,?,?,?,?,?,?)').run(req.user.id, title, goal_type || 'applications', target_count, period || 'weekly', start, end);
-  logActivity(req.user.id, 'goal', `New goal: ${title}`, `Target: ${target_count}`, 'goal', r.lastInsertRowid);
+  const r = db.prepare('INSERT INTO goals (user_id,title,goal_type,target_count,period,start_date,end_date) VALUES (?,?,?,?,?,?,?)').run(req.user.id, title, goal_type || 'applications', parsedTarget, period || 'weekly', start, end);
+  logActivity(req.user.id, 'goal', `New goal: ${title}`, `Target: ${parsedTarget}`, 'goal', r.lastInsertRowid);
   res.json({ id: r.lastInsertRowid });
 });
 
-router.delete('/goals/:id', (req, res) => {
+router.delete('/goals/:id', doubleCsrfProtection, (req, res) => {
   db.prepare('DELETE FROM goals WHERE id=? AND user_id=?').run(req.params.id, req.user.id);
   res.json({ message: 'Deleted' });
 });

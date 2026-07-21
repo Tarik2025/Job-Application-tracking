@@ -4,6 +4,16 @@ import { auth } from '../middleware/auth.js';
 import { calculateInsights } from '../services/manual.js';
 
 const router = Router();
+
+// CSRF mitigation: reject state-changing requests without JSON content-type
+router.use((req, res, next) => {
+  if (['POST','PUT','PATCH','DELETE'].includes(req.method)) {
+    const ct = String(req.headers['content-type'] || '');
+    if (!ct.includes('application/json')) return res.status(415).json({ error: 'Content-Type must be application/json' });
+  }
+  next();
+});
+
 router.use(auth);
 
 router.get('/', (req, res) => {

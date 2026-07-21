@@ -3,14 +3,27 @@ import { simpleParser } from 'mailparser';
 import { classifyEmail } from './gemini.js';
 import db from '../db.js';
 import { createDecipheriv, scryptSync } from 'crypto';
+import { z } from 'zod';
 
-const ENC_KEY = scryptSync(process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || 'fallback', 'cc-imap-salt-v1', 32);
+const ParsedEmailSchema = z.object({
+  subject: z.string().optional(),
+  from: z.object({ text: z.string().optional() }).optional(),
+  text: z.string().optional(),
+  html: z.string().optional(),
+  date: z.date().optional(),
+});
+
+if (!process.env.ENCRYPTION_KEY) {
+  console.error('FATAL: ENCRYPTION_KEY must be set — required for IMAP password decryption');
+  process.exit(1);
+}
+const ENC_KEY = scryptSync(process.env.ENCRYPTION_KEY, 'cc-imap-salt-v1', 32);
 function decrypt(enc) {
-  try {
-    const [ivHex, data] = enc.split(':');
-    const decipher = createDecipheriv('aes-256-cbc', ENC_KEY, Buffer.from(ivHex, 'hex'));
-    return decipher.update(data, 'hex', 'utf8') + decipher.final('utf8');
-  } catch { return enc; } // fallback for legacy plaintext
+  if (typeof enc !== 'string' || !enc.includes(':')) throw new Error('Invalid encrypted value');
+  const [ivHex, data] = enc.split(':');
+  if (!ivHex || !data || ivHex.length !== 32) throw new Error('Malformed encrypted value');
+  const decipher = createDecipheriv('aes-256-cbc', ENC_KEY, Buffer.from(ivHex, 'hex'));
+  return decipher.update(data, 'hex', 'utf8') + decipher.final('utf8');
 }
 
 // Job-related keywords to filter emails
@@ -27,15 +40,19 @@ function isJobRelated(subject = '', from = '', text = '') {
   return JOB_KEYWORDS.some(kw => content.includes(kw.toLowerCase()));
 }
 
+const FETCH_TIMEOUT_MS = 60000; // 60s overall timeout per account
+
 export function fetchEmails(emailConfig, userId) {
-  return new Promise((resolve, reject) => {
+  const imapPromise = new Promise((resolve, reject) => {
     const imap = new Imap({
       user: emailConfig.email,
       password: decrypt(emailConfig.password),
       host: emailConfig.host || 'imap.gmail.com',
       port: emailConfig.port || 993,
       tls: true,
-      tlsOptions: { rejectUnauthorized: true }
+      tlsOptions: { rejectUnauthorized: true },
+      connTimeout: 15000,  // 15s connection timeout
+      authTimeout: 10000   // 10s auth timeout
     });
 
     const results = [];
@@ -77,7 +94,8 @@ export function fetchEmails(emailConfig, userId) {
       const classified = [];
       for (const { raw, uid } of results) {
         try {
-          const parsed = await simpleParser(raw);
+          const rawParsed = await simpleParser(raw);
+          const parsed = ParsedEmailSchema.parse(rawParsed);
           const subject = parsed.subject || '';
           const from = parsed.from?.text || '';
           const text = parsed.text || parsed.html?.replace(/<[^>]+>/g, '') || '';
@@ -148,6 +166,12 @@ export function fetchEmails(emailConfig, userId) {
 
     imap.connect();
   });
+
+  // Race the IMAP operation against a timeout to prevent indefinite hangs
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('IMAP fetch timed out')), FETCH_TIMEOUT_MS)
+  );
+  return Promise.race([imapPromise, timeout]);
 }
 
 // Fetch from all configured accounts for a user
@@ -160,7 +184,7 @@ export async function fetchAllAccounts(userId) {
       const results = await fetchEmails(account, userId);
       allResults.push({ email: account.email, fetched: results.length, results });
     } catch (err) {
-      allResults.push({ email: account.email, error: err.message });
+      allResults.push({ email: account.email, error: 'Failed to fetch emails' });
     }
   }
   return allResults;
