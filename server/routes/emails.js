@@ -47,9 +47,15 @@ router.post('/classify', async (req, res) => {
     // Verify company name using Clearbit free API (2s timeout to avoid hanging)
     if (classification.company) {
       try {
+        const clearbitUrl = new URL('https://autocomplete.clearbit.com/v1/companies/suggest');
+        clearbitUrl.searchParams.set('query', classification.company);
+        // SSRF guard: ensure URL always resolves to the expected host only
+        if (clearbitUrl.hostname !== 'autocomplete.clearbit.com' || clearbitUrl.protocol !== 'https:') {
+          throw new Error('SSRF guard: unexpected Clearbit URL');
+        }
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 2000);
-        const cbRes = await fetch(`https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(classification.company)}`, { signal: controller.signal });
+        const cbRes = await fetch(clearbitUrl.toString(), { signal: controller.signal });
         clearTimeout(timer);
         if (cbRes.ok) {
           const suggestions = await cbRes.json();

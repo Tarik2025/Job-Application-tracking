@@ -47,7 +47,10 @@ app.use('/api/admin/login', authLimiter);
 app.use(cors({ origin: process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production' ? undefined : 'http://localhost:3000'), credentials: true }));
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
-app.use(doubleCsrfProtection);
+app.use((req, res, next) => {
+  if (req.path === '/api/csrf-token') return next();
+  doubleCsrfProtection(req, res, next);
+});
 
 // XSS sanitization middleware — strips all dangerous HTML/JS patterns from JSON bodies
 // NOTE: multipart/form-data (file uploads) bypasses this middleware by design —

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -291,7 +290,7 @@ db.exec(`
   -- sent constrained to boolean 0/1
   -- NOTE: This table is intentionally unused (no routes wire to it).
   -- It is kept as dead schema for potential future use.
-  -- To remove cleanly: add a migration `DROP TABLE IF EXISTS follow_ups`
+  -- To remove cleanly: add a migration DROP TABLE IF EXISTS follow_ups
   -- and remove the two indexes below once confirmed safe to drop.
   CREATE TABLE IF NOT EXISTS follow_ups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -337,7 +336,7 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- ── Performance indexes ────────────────────────────────────────────────────
+  -- -- Performance indexes ----------------------------------------------------
   -- Every WHERE user_id=? query does a full table scan without these.
   -- Critical for production with multiple users.
 
@@ -352,7 +351,6 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_emails_user_id              ON emails(user_id);
   CREATE INDEX IF NOT EXISTS idx_emails_application_id       ON emails(application_id);
-  CREATE INDEX IF NOT EXISTS idx_emails_user_received        ON emails(user_id, received_at DESC);
 
   CREATE INDEX IF NOT EXISTS idx_reminders_user_id           ON reminders(user_id);
   CREATE INDEX IF NOT EXISTS idx_reminders_user_done         ON reminders(user_id, is_done, remind_at);
@@ -390,7 +388,7 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_email_accounts_user_id      ON email_accounts(user_id);
 
-  -- ── Migrations for existing databases ──────────────────────────────────────
+  -- -- Migrations for existing databases --------------------------------------
   -- These ALTER TABLE statements are safe to run repeatedly because
   -- better-sqlite3 will throw only if the column already exists, which we
   -- catch below in the migration runner.
@@ -418,7 +416,7 @@ db.exec(`
     ('Blockchain'),('Game Development'),('Embedded Systems'),('UI/UX Design');
 `);
 
-// ── Safe column migrations (for databases that already exist) ──────────────
+// -- Safe column migrations (for databases that already exist) --------------
 // Each migration is attempted individually; if the column already exists
 // SQLite throws "duplicate column name" which we silently ignore.
 // NOTE: SQLite ALTER TABLE ADD COLUMN does not support CHECK constraints.
@@ -433,29 +431,30 @@ const migrations = [
   // interview_prep table
   `ALTER TABLE interview_prep ADD COLUMN study_plan TEXT`,
   `ALTER TABLE interview_prep ADD COLUMN company_insights TEXT`,
-  // goals table — default 'applications' so all existing goals auto-count correctly
+  // goals table -- default 'applications' so all existing goals auto-count correctly
   `ALTER TABLE goals ADD COLUMN goal_type TEXT DEFAULT 'applications'`,
   // users table
   `ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1`,
   `ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0`,
   `ALTER TABLE users ADD COLUMN reset_token TEXT`,
   `ALTER TABLE users ADD COLUMN reset_token_expires INTEGER`,
-  // emails table — imap_uid for stable server-side deduplication
+  // emails table -- imap_uid for stable server-side deduplication
   `ALTER TABLE emails ADD COLUMN imap_uid TEXT`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_imap_uid ON emails(user_id, imap_uid) WHERE imap_uid IS NOT NULL`,
-  // email_accounts — add unique constraint for existing DBs via a new unique index
+  // email_accounts -- add unique constraint for existing DBs via a new unique index
   // (SQLite cannot ALTER TABLE ADD CONSTRAINT, so we use CREATE UNIQUE INDEX)
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_email_accounts_user_email ON email_accounts(user_id, email)`,
+  `CREATE INDEX IF NOT EXISTS idx_emails_user_received ON emails(user_id, received_at DESC)`,
 ];
 
 for (const sql of migrations) {
   try {
     db.prepare(sql).run();
   } catch (err) {
-    // Only ignore "duplicate column name" and "already exists" — rethrow everything else
+    // Only ignore "duplicate column name" and "already exists" -- rethrow everything else
     const msg = err.message || '';
     if (!msg.includes('duplicate column name') && !msg.includes('already exists')) {
-      throw new Error(`Migration failed: ${sql} — ${msg}`);
+      throw new Error(`Migration failed: ${sql} -- ${msg}`);
     }
   }
 }
