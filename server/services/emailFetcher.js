@@ -2,6 +2,16 @@ import Imap from 'imap';
 import { simpleParser } from 'mailparser';
 import { classifyEmail } from './gemini.js';
 import db from '../db.js';
+import { createDecipheriv, scryptSync } from 'crypto';
+
+const ENC_KEY = scryptSync(process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || 'fallback', 'cc-imap-salt-v1', 32);
+function decrypt(enc) {
+  try {
+    const [ivHex, data] = enc.split(':');
+    const decipher = createDecipheriv('aes-256-cbc', ENC_KEY, Buffer.from(ivHex, 'hex'));
+    return decipher.update(data, 'hex', 'utf8') + decipher.final('utf8');
+  } catch { return enc; } // fallback for legacy plaintext
+}
 
 // Job-related keywords to filter emails
 const JOB_KEYWORDS = [
@@ -21,11 +31,11 @@ export function fetchEmails(emailConfig, userId) {
   return new Promise((resolve, reject) => {
     const imap = new Imap({
       user: emailConfig.email,
-      password: emailConfig.password,
+      password: decrypt(emailConfig.password),
       host: emailConfig.host || 'imap.gmail.com',
       port: emailConfig.port || 993,
       tls: true,
-      tlsOptions: { rejectUnauthorized: false }
+      tlsOptions: { rejectUnauthorized: true }
     });
 
     const results = [];
@@ -47,10 +57,12 @@ export function fetchEmails(emailConfig, userId) {
           const fetch = imap.fetch(recentUids, { bodies: '', struct: true });
 
           fetch.on('message', (msg) => {
+            let uid = null;
+            msg.once('attributes', (attrs) => { uid = attrs.uid; });
             msg.on('body', (stream) => {
               let buffer = '';
               stream.on('data', (chunk) => { buffer += chunk.toString('utf8'); });
-              stream.on('end', () => { results.push(buffer); });
+              stream.on('end', () => { results.push({ raw: buffer, uid }); });
             });
           });
 
@@ -63,7 +75,7 @@ export function fetchEmails(emailConfig, userId) {
     imap.once('end', async () => {
       // Parse and classify job-related emails
       const classified = [];
-      for (const raw of results) {
+      for (const { raw, uid } of results) {
         try {
           const parsed = await simpleParser(raw);
           const subject = parsed.subject || '';
@@ -73,10 +85,11 @@ export function fetchEmails(emailConfig, userId) {
 
           if (!isJobRelated(subject, from, text)) continue;
 
-          // Check if already processed (by subject + date)
-          const existing = db.prepare(
-            'SELECT id FROM emails WHERE user_id = ? AND subject = ? AND created_at LIKE ?'
-          ).get(userId, subject, date ? `${date.toISOString().slice(0, 10)}%` : '%');
+          // Dedup by IMAP UID (stable, server-assigned) — fall back to exact subject+from+date
+          const imapUid = uid ? `${emailConfig.email}:${uid}` : null;
+          const existing = imapUid
+            ? db.prepare('SELECT id FROM emails WHERE user_id=? AND imap_uid=?').get(userId, imapUid)
+            : db.prepare('SELECT id FROM emails WHERE user_id=? AND subject=? AND from_address=? AND received_at=?').get(userId, subject, from, date ? date.toISOString() : null);
 
           if (existing) continue;
 
@@ -86,32 +99,43 @@ export function fetchEmails(emailConfig, userId) {
           // Auto-link to application
           let applicationId = null;
           if (classification.company) {
-            const app = db.prepare('SELECT id, status FROM applications WHERE user_id = ? AND company LIKE ? ORDER BY applied_date DESC LIMIT 1')
-              .get(userId, `%${classification.company}%`);
+            const app = db.prepare('SELECT id, status FROM applications WHERE user_id = ? AND company = ? ORDER BY applied_date DESC LIMIT 1')
+              .get(userId, classification.company);
             if (app) {
               applicationId = app.id;
-              if (classification.suggested_status && classification.suggested_status !== app.status) {
+              // Only auto-update status when confidence is high (>=0.8) and status differs
+              const confidence = typeof classification.confidence === 'number' ? classification.confidence : 0;
+              if (classification.suggested_status && classification.suggested_status !== app.status && confidence >= 0.8) {
                 db.prepare('UPDATE applications SET status = ?, last_updated = CURRENT_TIMESTAMP WHERE id = ?')
                   .run(classification.suggested_status, app.id);
                 db.prepare('INSERT INTO status_history (application_id, user_id, from_status, to_status, note) VALUES (?,?,?,?,?)')
                   .run(app.id, userId, app.status, classification.suggested_status, `Auto-updated from email: ${subject}`);
               }
             } else {
-              // Auto-create application
+              // Auto-create application — check duplicate first
               const role = classification.role || 'Unknown Role';
-              const newApp = db.prepare(
-                'INSERT INTO applications (user_id, company, role, status, platform) VALUES (?, ?, ?, ?, ?)'
-              ).run(userId, classification.company, role, classification.suggested_status || 'applied', 'Email');
-              applicationId = newApp.lastInsertRowid;
-              db.prepare('INSERT INTO status_history (application_id, user_id, from_status, to_status, note) VALUES (?,?,?,?,?)')
-                .run(applicationId, userId, null, classification.suggested_status || 'applied', `Auto-created from email: ${subject}`);
+              const dupCheck = db.prepare('SELECT id FROM applications WHERE user_id=? AND company=? AND role=?').get(userId, classification.company, role);
+              if (!dupCheck) {
+                const newApp = db.prepare(
+                  'INSERT INTO applications (user_id, company, role, status, platform) VALUES (?, ?, ?, ?, ?)'
+                ).run(userId, classification.company, role, classification.suggested_status || 'applied', 'Email');
+                applicationId = newApp.lastInsertRowid;
+                db.prepare('INSERT INTO status_history (application_id, user_id, from_status, to_status, note) VALUES (?,?,?,?,?)')
+                  .run(applicationId, userId, null, classification.suggested_status || 'applied', `Auto-created from email: ${subject}`);
+                // Auto-reminder: follow up in 7 days
+                const remindDate = new Date(Date.now() + 7 * 86400000).toISOString();
+                db.prepare('INSERT INTO reminders (user_id,application_id,title,remind_at) VALUES (?,?,?,?)')
+                  .run(userId, applicationId, `Follow up with ${classification.company}`, remindDate);
+              } else {
+                applicationId = dupCheck.id;
+              }
             }
           }
 
-          // Save email
+          // Save email with imap_uid for future dedup
           db.prepare(
-            'INSERT INTO emails (user_id, application_id, subject, body, classification, extracted_data) VALUES (?, ?, ?, ?, ?, ?)'
-          ).run(userId, applicationId, subject, text.slice(0, 5000), classification.classification, JSON.stringify(classification));
+            'INSERT INTO emails (user_id, application_id, subject, from_address, body, classification, extracted_data, received_at, imap_uid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+          ).run(userId, applicationId, subject, from, text.slice(0, 5000), classification.classification, JSON.stringify(classification), date ? date.toISOString() : null, imapUid);
 
           classified.push({ subject, classification, applicationId });
         } catch (e) {

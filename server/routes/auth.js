@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { randomBytes } from 'crypto';
+import { unlink } from 'fs';
 import db, { logAudit } from '../db.js';
 import { auth } from '../middleware/auth.js';
 import { resetPasswordEmail } from '../services/mail.js';
@@ -35,26 +37,31 @@ router.post('/register', async (req, res) => {
     if (existing) return res.status(400).json({ error: 'Email already registered' });
 
     const hash = await bcrypt.hash(password, 12);
-    const result = db.prepare(
-      `INSERT INTO users (email,password,name,phone,country_code,gender,dob,user_type,college,degree,branch,year_of_study,passout_year,company,designation,experience,skills,preferred_role,city,state,country,linkedin,github,portfolio) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).run(cleanEmail, hash, cleanName, phone||null, country_code||'+91', gender||null, dob||null, user_type||null, college||null, degree||null, branch||null, year_of_study||null, passout_year||null, company||null, designation||null, experience||null, skills||null, preferred_role||null, city||null, state||null, country||'India', linkedin||null, github||null, portfolio||null);
 
-    const userId = result.lastInsertRowid;
+    const registerUser = db.transaction(() => {
+      const result = db.prepare(
+        `INSERT INTO users (email,password,name,phone,country_code,gender,dob,user_type,college,degree,branch,year_of_study,passout_year,company,designation,experience,skills,preferred_role,city,state,country,linkedin,github,portfolio) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).run(cleanEmail, hash, cleanName, phone||null, country_code||'+91', gender||null, dob||null, user_type||null, college||null, degree||null, branch||null, year_of_study||null, passout_year||null, company||null, designation||null, experience||null, skills||null, preferred_role||null, city||null, state||null, country||'India', linkedin||null, github||null, portfolio||null);
 
-    if (college?.trim()) db.prepare('INSERT OR IGNORE INTO colleges (name, added_by) VALUES (?, ?)').run(college.trim(), userId);
+      const userId = result.lastInsertRowid;
 
-    if (stacks?.length) {
-      const ins = db.prepare('INSERT OR IGNORE INTO user_stacks (user_id, stack_id) VALUES (?, ?)');
-      const find = db.prepare('SELECT id FROM stacks WHERE name = ?');
-      const add = db.prepare('INSERT OR IGNORE INTO stacks (name, added_by) VALUES (?, ?)');
-      for (const s of stacks) { let st = find.get(s); if (!st) { add.run(s, userId); st = find.get(s); } if (st) ins.run(userId, st.id); }
-    }
+      if (college?.trim()) db.prepare('INSERT OR IGNORE INTO colleges (name, added_by) VALUES (?, ?)').run(college.trim(), userId);
 
+      if (stacks?.length) {
+        const ins = db.prepare('INSERT OR IGNORE INTO user_stacks (user_id, stack_id) VALUES (?, ?)');
+        const find = db.prepare('SELECT id FROM stacks WHERE name = ?');
+        const add = db.prepare('INSERT OR IGNORE INTO stacks (name, added_by) VALUES (?, ?)');
+        for (const s of stacks) { let st = find.get(s); if (!st) { add.run(s, userId); st = find.get(s); } if (st) ins.run(userId, st.id); }
+      }
+      return userId;
+    });
+
+    const userId = registerUser();
     logAudit(userId, 'REGISTER', 'user', userId, { email }, req.ip);
     const token = jwt.sign({ id: userId, email: cleanEmail, name: cleanName }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.cookie('token', token, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
     res.json({ user: { id: userId, email, name } });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error('POST /register:', err); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 // Login
@@ -62,20 +69,21 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    const user = db.prepare('SELECT id,email,name,password,is_active,token_version FROM users WHERE email = ?').get(email);
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
     if (!user.is_active) return res.status(403).json({ error: 'Account deactivated' });
     if (!(await bcrypt.compare(password, user.password))) return res.status(401).json({ error: 'Invalid credentials' });
 
     logAudit(user.id, 'LOGIN', 'user', user.id, null, req.ip);
-    const token = jwt.sign({ id: user.id, email: user.email, name: user.name }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ id: user.id, email: user.email, name: user.name, tv: user.token_version }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.cookie('token', token, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
     res.json({ user: { id: user.id, email: user.email, name: user.name } });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error('POST /login:', err); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// Logout
+// Logout — increment token_version to invalidate all existing tokens
 router.post('/logout', auth, (req, res) => {
+  db.prepare('UPDATE users SET token_version = token_version + 1 WHERE id = ?').run(req.user.id);
   logAudit(req.user.id, 'LOGOUT', 'user', req.user.id, null, req.ip);
   res.clearCookie('token');
   res.json({ message: 'Logged out' });
@@ -95,18 +103,21 @@ router.put('/me', auth, (req, res) => {
   for (const f of fields) { if (req.body[f] !== undefined) { updates.push(`${f} = ?`); values.push(req.body[f]); } }
   if (updates.length === 0 && !req.body.stacks) return res.status(400).json({ error: 'No fields to update' });
 
-  if (updates.length > 0) {
-    updates.push('updated_at = CURRENT_TIMESTAMP');
-    values.push(req.user.id);
-    db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...values);
-  }
-
-  if (req.body.stacks) {
-    db.prepare('DELETE FROM user_stacks WHERE user_id = ?').run(req.user.id);
-    const ins = db.prepare('INSERT OR IGNORE INTO user_stacks (user_id, stack_id) VALUES (?, ?)');
-    const find = db.prepare('SELECT id FROM stacks WHERE name = ?');
-    const add = db.prepare('INSERT OR IGNORE INTO stacks (name, added_by) VALUES (?, ?)');
-    for (const s of req.body.stacks) { let st = find.get(s); if (!st) { add.run(s, req.user.id); st = find.get(s); } if (st) ins.run(req.user.id, st.id); }
+  if (updates.length > 0 || req.body.stacks) {
+    db.transaction(() => {
+      if (updates.length > 0) {
+        updates.push('updated_at = CURRENT_TIMESTAMP');
+        values.push(req.user.id);
+        db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+      }
+      if (req.body.stacks) {
+        db.prepare('DELETE FROM user_stacks WHERE user_id = ?').run(req.user.id);
+        const ins = db.prepare('INSERT OR IGNORE INTO user_stacks (user_id, stack_id) VALUES (?, ?)');
+        const find = db.prepare('SELECT id FROM stacks WHERE name = ?');
+        const add = db.prepare('INSERT OR IGNORE INTO stacks (name, added_by) VALUES (?, ?)');
+        for (const s of req.body.stacks) { let st = find.get(s); if (!st) { add.run(s, req.user.id); st = find.get(s); } if (st) ins.run(req.user.id, st.id); }
+      }
+    })();
   }
 
   logAudit(req.user.id, 'UPDATE_PROFILE', 'user', req.user.id, Object.keys(req.body), req.ip);
@@ -123,20 +134,23 @@ router.put('/change-password', auth, async (req, res) => {
   if (!(await bcrypt.compare(current_password, user.password))) return res.status(401).json({ error: 'Current password incorrect' });
 
   const hash = await bcrypt.hash(new_password, 12);
-  db.prepare('UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(hash, req.user.id);
+  db.prepare('UPDATE users SET password = ?, token_version = token_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(hash, req.user.id);
   logAudit(req.user.id, 'CHANGE_PASSWORD', 'user', req.user.id, null, req.ip);
   res.json({ message: 'Password changed' });
 });
 
-// Delete own account
+// Delete own account — also removes resume files from disk
 router.delete('/me', auth, async (req, res) => {
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: 'Password required for account deletion' });
   const user = db.prepare('SELECT password FROM users WHERE id = ?').get(req.user.id);
   if (!(await bcrypt.compare(password, user.password))) return res.status(401).json({ error: 'Incorrect password' });
 
+  // Delete resume files from disk before cascading DB delete
+  const resumes = db.prepare('SELECT file_path FROM resumes WHERE user_id=?').all(req.user.id);
   logAudit(req.user.id, 'DELETE_ACCOUNT', 'user', req.user.id, null, req.ip);
   db.prepare('DELETE FROM users WHERE id = ?').run(req.user.id);
+  for (const r of resumes) { if (r.file_path) unlink(r.file_path, () => {}); }
   res.clearCookie('token');
   res.json({ message: 'Account deleted' });
 });
@@ -147,24 +161,28 @@ router.post('/forgot-password', async (req, res) => {
     const { email } = req.body;
     const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
     if (!user) return res.json({ message: 'If account exists, reset link sent' });
-    const token = jwt.sign({ id: user.id, purpose: 'reset' }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const token = randomBytes(32).toString('hex');
+    const expires = Date.now() + 60 * 60 * 1000; // 1 hour
+    db.prepare('UPDATE users SET reset_token=?, reset_token_expires=? WHERE id=?').run(token, expires, user.id);
     await resetPasswordEmail(email, token);
     logAudit(user.id, 'FORGOT_PASSWORD', 'user', user.id, null, req.ip);
     res.json({ message: 'If account exists, reset link sent' });
   } catch { res.status(500).json({ error: 'Failed to send email' }); }
 });
 
-// Reset password
+// Reset password — token is single-use: cleared from DB after use
 router.post('/reset-password', async (req, res) => {
   try {
     const { token, password } = req.body;
     if (!token || !password) return res.status(400).json({ error: 'Token and password required' });
     if (password.length < 8) return res.status(400).json({ error: 'Password too short' });
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-    if (payload.purpose !== 'reset') return res.status(400).json({ error: 'Invalid token' });
+    const user = db.prepare('SELECT id, reset_token, reset_token_expires FROM users WHERE reset_token=?').get(token);
+    if (!user || !user.reset_token_expires || Date.now() > user.reset_token_expires) {
+      return res.status(400).json({ error: 'Invalid or expired token' });
+    }
     const hash = await bcrypt.hash(password, 12);
-    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hash, payload.id);
-    logAudit(payload.id, 'RESET_PASSWORD', 'user', payload.id, null, req.ip);
+    db.prepare('UPDATE users SET password=?, reset_token=NULL, reset_token_expires=NULL, token_version=token_version+1, updated_at=CURRENT_TIMESTAMP WHERE id=?').run(hash, user.id);
+    logAudit(user.id, 'RESET_PASSWORD', 'user', user.id, null, req.ip);
     res.json({ message: 'Password reset successful' });
   } catch { res.status(400).json({ error: 'Invalid or expired token' }); }
 });

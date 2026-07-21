@@ -9,7 +9,10 @@ router.use(auth);
 // ===== APPLICATION SCORING =====
 // Score based on: has JD (+20), has contact (+15), priority high (+15), response received (+25), days < 14 (+10), has notes (+10), has tags (+5)
 router.get('/scores', (req, res) => {
-  const apps = db.prepare('SELECT * FROM applications WHERE user_id=?').all(req.user.id);
+  const apps = db.prepare('SELECT id,company,role,status,priority,job_description,contact_person,contact_email,notes,response_date,applied_date FROM applications WHERE user_id=?').all(req.user.id);
+  const taggedIds = new Set(
+    db.prepare('SELECT DISTINCT application_id FROM application_tags WHERE application_id IN (SELECT id FROM applications WHERE user_id=?)').all(req.user.id).map(r => r.application_id)
+  );
   const scored = apps.map(a => {
     let score = 0;
     if (a.job_description) score += 20;
@@ -19,15 +22,37 @@ router.get('/scores', (req, res) => {
     const days = Math.floor((Date.now() - new Date(a.applied_date).getTime()) / 86400000);
     if (days <= 14) score += 10;
     if (a.notes) score += 10;
-    const hasTags = db.prepare('SELECT COUNT(*) as c FROM application_tags WHERE application_id=?').get(a.id).c > 0;
-    if (hasTags) score += 5;
+    if (taggedIds.has(a.id)) score += 5;
     score = Math.min(score, 100);
-    // Update score in DB
-    db.prepare('UPDATE applications SET score=? WHERE id=?').run(score, a.id);
     return { id: a.id, company: a.company, role: a.role, status: a.status, score, days_since: days };
   });
   scored.sort((a, b) => b.score - a.score);
   res.json(scored);
+});
+
+// Persist scores — call after GET /scores when you want to save computed values
+router.post('/scores/sync', (req, res) => {
+  const apps = db.prepare('SELECT id,priority,job_description,contact_person,contact_email,notes,response_date,applied_date FROM applications WHERE user_id=?').all(req.user.id);
+  const taggedIds = new Set(
+    db.prepare('SELECT DISTINCT application_id FROM application_tags WHERE application_id IN (SELECT id FROM applications WHERE user_id=?)').all(req.user.id).map(r => r.application_id)
+  );
+  const updateScore = db.prepare('UPDATE applications SET score=? WHERE id=? AND score!=?');
+  db.transaction(() => {
+    for (const a of apps) {
+      let score = 0;
+      if (a.job_description) score += 20;
+      if (a.contact_person || a.contact_email) score += 15;
+      if (a.priority === 'high') score += 15;
+      if (a.response_date) score += 25;
+      const days = Math.floor((Date.now() - new Date(a.applied_date).getTime()) / 86400000);
+      if (days <= 14) score += 10;
+      if (a.notes) score += 10;
+      if (taggedIds.has(a.id)) score += 5;
+      score = Math.min(score, 100);
+      updateScore.run(score, a.id, score);
+    }
+  })();
+  res.json({ message: 'Scores synced' });
 });
 
 // ===== STREAK TRACKER =====
@@ -76,7 +101,7 @@ router.post('/blacklist', (req, res) => {
   const { company, reason } = req.body;
   if (!company) return res.status(400).json({ error: 'Company required' });
   db.prepare('INSERT OR IGNORE INTO blacklist (user_id,company,reason) VALUES (?,?,?)').run(req.user.id, company, reason || null);
-  logActivity(req.user.id, 'blacklist', `Blacklisted ${company}`, reason);
+  logActivity(req.user.id, 'blacklist', `Blacklisted ${company}`, reason || null, 'blacklist', null);
   res.json({ message: 'Blacklisted' });
 });
 
@@ -147,6 +172,10 @@ router.put('/interviews/:id', (req, res) => {
 
   values.push(req.params.id);
   db.prepare(`UPDATE interviews SET ${updates.join(',')} WHERE id=?`).run(...values);
+  // Log outcome change to activity feed
+  if (outcome) {
+    logActivity(req.user.id, 'interview_outcome', `Interview outcome: ${outcome}`, `Round: ${interview.round_name}`, 'interview', Number(req.params.id));
+  }
   res.json({ message: 'Updated' });
 });
 
@@ -185,15 +214,21 @@ router.get('/activity', (req, res) => {
 // ===== GOALS =====
 router.get('/goals', (req, res) => {
   const goals = db.prepare('SELECT * FROM goals WHERE user_id=? ORDER BY created_at DESC').all(req.user.id);
-  // Auto-calculate current_count for application goals
   const enriched = goals.map(g => {
-    if (g.title.toLowerCase().includes('appl')) {
+    if (g.goal_type === 'applications') {
       let where = "WHERE user_id=?";
       const p = [req.user.id];
       if (g.start_date) { where += ' AND applied_date >= ?'; p.push(g.start_date); }
       if (g.end_date) { where += ' AND applied_date <= ?'; p.push(g.end_date); }
       const count = db.prepare(`SELECT COUNT(*) as c FROM applications ${where}`).get(...p).c;
-      db.prepare('UPDATE goals SET current_count=?, is_completed=? WHERE id=?').run(count, count >= g.target_count ? 1 : 0, g.id);
+      return { ...g, current_count: count, is_completed: count >= g.target_count ? 1 : 0, progress: Math.min(Math.round((count / g.target_count) * 100), 100) };
+    }
+    if (g.goal_type === 'interviews') {
+      let q = 'SELECT COUNT(*) as c FROM interviews WHERE user_id=?';
+      const p = [req.user.id];
+      if (g.start_date) { q += ' AND interview_date >= ?'; p.push(g.start_date); }
+      if (g.end_date) { q += ' AND interview_date <= ?'; p.push(g.end_date + ' 23:59:59'); }
+      const count = db.prepare(q).get(...p).c;
       return { ...g, current_count: count, is_completed: count >= g.target_count ? 1 : 0, progress: Math.min(Math.round((count / g.target_count) * 100), 100) };
     }
     return { ...g, progress: Math.min(Math.round((g.current_count / g.target_count) * 100), 100) };
@@ -201,8 +236,35 @@ router.get('/goals', (req, res) => {
   res.json(enriched);
 });
 
+// Persist goal progress — call after GET /goals when you want to save computed counts
+router.post('/goals/sync', (req, res) => {
+  const goals = db.prepare('SELECT * FROM goals WHERE user_id=? ORDER BY created_at DESC').all(req.user.id);
+  const updateGoal = db.prepare('UPDATE goals SET current_count=?, is_completed=? WHERE id=? AND (current_count!=? OR is_completed!=?)');
+  db.transaction(() => {
+    for (const g of goals) {
+      let count = g.current_count;
+      let is_completed = g.is_completed;
+      if (g.goal_type === 'applications') {
+        let where = "WHERE user_id=?"; const p = [req.user.id];
+        if (g.start_date) { where += ' AND applied_date >= ?'; p.push(g.start_date); }
+        if (g.end_date) { where += ' AND applied_date <= ?'; p.push(g.end_date); }
+        count = db.prepare(`SELECT COUNT(*) as c FROM applications ${where}`).get(...p).c;
+        is_completed = count >= g.target_count ? 1 : 0;
+      } else if (g.goal_type === 'interviews') {
+        let q = 'SELECT COUNT(*) as c FROM interviews WHERE user_id=?'; const p = [req.user.id];
+        if (g.start_date) { q += ' AND interview_date >= ?'; p.push(g.start_date); }
+        if (g.end_date) { q += ' AND interview_date <= ?'; p.push(g.end_date + ' 23:59:59'); }
+        count = db.prepare(q).get(...p).c;
+        is_completed = count >= g.target_count ? 1 : 0;
+      }
+      updateGoal.run(count, is_completed, g.id, count, is_completed);
+    }
+  })();
+  res.json({ message: 'Goals synced' });
+});
+
 router.post('/goals', (req, res) => {
-  const { title, target_count, period, start_date, end_date } = req.body;
+  const { title, target_count, period, start_date, end_date, goal_type } = req.body;
   if (!title || !target_count) return res.status(400).json({ error: 'Title and target required' });
 
   const start = start_date || new Date().toISOString().split('T')[0];
@@ -211,8 +273,8 @@ router.post('/goals', (req, res) => {
   if (!end && period === 'weekly') end = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
   if (!end && period === 'monthly') end = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
 
-  const r = db.prepare('INSERT INTO goals (user_id,title,target_count,period,start_date,end_date) VALUES (?,?,?,?,?,?)').run(req.user.id, title, target_count, period || 'weekly', start, end);
-  logActivity(req.user.id, 'goal', `New goal: ${title}`, `Target: ${target_count}`);
+  const r = db.prepare('INSERT INTO goals (user_id,title,goal_type,target_count,period,start_date,end_date) VALUES (?,?,?,?,?,?,?)').run(req.user.id, title, goal_type || 'applications', target_count, period || 'weekly', start, end);
+  logActivity(req.user.id, 'goal', `New goal: ${title}`, `Target: ${target_count}`, 'goal', r.lastInsertRowid);
   res.json({ id: r.lastInsertRowid });
 });
 

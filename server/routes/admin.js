@@ -10,15 +10,22 @@ const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const ADMIN_SECRET = process.env.ADMIN_SECRET;
 
-// Admin login with secret key
+// Admin login — password verified with bcrypt against ADMIN_PASSWORD_HASH env var
 router.post('/login', async (req, res) => {
   const { email, password, secret_key } = req.body;
   if (!email || !password || !secret_key) return res.status(400).json({ error: 'Email, password and secret key required' });
-  if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD || secret_key !== ADMIN_SECRET) {
+  if (email !== ADMIN_EMAIL || secret_key !== ADMIN_SECRET) {
     return res.status(401).json({ error: 'Invalid admin credentials' });
   }
+  // Use bcrypt hash if available, fall back to plaintext for dev convenience
+  const hashEnv = process.env.ADMIN_PASSWORD_HASH;
+  const passwordOk = hashEnv
+    ? await bcrypt.compare(password, hashEnv)
+    : password === ADMIN_PASSWORD;
+  if (!passwordOk) return res.status(401).json({ error: 'Invalid admin credentials' });
+
   const token = jwt.sign({ id: 0, email: ADMIN_EMAIL, name: 'Admin', is_admin: true }, process.env.JWT_SECRET, { expiresIn: '7d' });
-  res.cookie('admin_token', token, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: 'lax' });
+  res.cookie('admin_token', token, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
   res.json({ admin: true, email: ADMIN_EMAIL });
 });
 
@@ -67,7 +74,7 @@ router.get('/search', (req, res) => {
 
   const users = db.prepare('SELECT id,name,email,user_type FROM users WHERE name LIKE ? OR email LIKE ? LIMIT 10').all(`%${q}%`, `%${q}%`);
   const apps = db.prepare('SELECT a.id,a.company,a.role,a.status,u.name as user_name FROM applications a JOIN users u ON a.user_id=u.id WHERE a.company LIKE ? OR a.role LIKE ? LIMIT 10').all(`%${q}%`, `%${q}%`);
-  const emails = db.prepare('SELECT id,subject,classification,created_at FROM emails WHERE subject LIKE ? OR body LIKE ? LIMIT 10').all(`%${q}%`, `%${q}%`);
+  const emails = db.prepare('SELECT id,subject,classification,created_at FROM emails WHERE subject LIKE ? LIMIT 10').all(`%${q}%`);
 
   res.json({ users, applications: apps, emails });
 });
@@ -167,7 +174,7 @@ router.put('/applications/:id', (req, res) => {
   const app = db.prepare('SELECT * FROM applications WHERE id=?').get(req.params.id);
   if (!app) return res.status(404).json({ error: 'Not found' });
 
-  const fields = ['company','role','status','platform','job_url','job_description','salary_range','location','notes','priority'];
+  const fields = ['company','role','status','platform','job_url','job_description','salary_expected','salary_offered','location','notes','priority'];
   const updates = []; const values = [];
   for (const f of fields) { if (req.body[f] !== undefined) { updates.push(`${f} = ?`); values.push(req.body[f]); } }
   if (updates.length === 0) return res.status(400).json({ error: 'No fields' });
@@ -210,7 +217,7 @@ router.get('/emails', (req, res) => {
 
   let where = 'WHERE 1=1';
   const params = [];
-  if (search) { where += ' AND (e.subject LIKE ? OR e.body LIKE ?)'; params.push(`%${search}%`,`%${search}%`); }
+  if (search) { where += ' AND (e.subject LIKE ?)'; params.push(`%${search}%`); }
   if (classification) { where += ' AND e.classification = ?'; params.push(classification); }
 
   const total = db.prepare(`SELECT COUNT(*) as c FROM emails e ${where}`).get(...params).c;

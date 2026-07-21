@@ -8,8 +8,6 @@ router.use(auth);
 
 router.get('/', (req, res) => {
   const uid = req.user.id;
-  const apps = db.prepare('SELECT * FROM applications WHERE user_id=?').all(uid);
-  const total = apps.length;
 
   const statusBreakdown = db.prepare('SELECT status, COUNT(*) as count FROM applications WHERE user_id=? GROUP BY status').all(uid);
   const platformBreakdown = db.prepare('SELECT platform, COUNT(*) as count FROM applications WHERE user_id=? AND platform IS NOT NULL GROUP BY platform ORDER BY count DESC').all(uid);
@@ -17,26 +15,33 @@ router.get('/', (req, res) => {
   const monthlyApps = db.prepare("SELECT strftime('%Y-%m', applied_date) as month, COUNT(*) as count FROM applications WHERE user_id=? GROUP BY month ORDER BY month DESC LIMIT 12").all(uid);
   const workModeBreakdown = db.prepare('SELECT work_mode, COUNT(*) as count FROM applications WHERE user_id=? AND work_mode IS NOT NULL GROUP BY work_mode').all(uid);
 
-  // Response time analytics
-  const responded = apps.filter(a => a.response_date);
-  const avgResponseDays = responded.length > 0 ? Math.round(responded.reduce((s, a) => s + Math.floor((new Date(a.response_date) - new Date(a.applied_date)) / 86400000), 0) / responded.length) : null;
-  const fastestResponse = responded.length > 0 ? Math.min(...responded.map(a => Math.floor((new Date(a.response_date) - new Date(a.applied_date)) / 86400000))) : null;
+  const total = statusBreakdown.reduce((s, r) => s + r.count, 0);
 
-  // Rates
+  // Response time analytics — done in SQL, not JS memory
+  const responseStats = db.prepare(`
+    SELECT
+      COUNT(*) as responded_count,
+      ROUND(AVG(julianday(response_date) - julianday(applied_date))) as avg_response_days,
+      MIN(CAST(julianday(response_date) - julianday(applied_date) AS INTEGER)) as fastest_response
+    FROM applications
+    WHERE user_id=? AND response_date IS NOT NULL
+  `).get(uid);
+
   const interviews = statusBreakdown.find(s => s.status === 'interview')?.count || 0;
   const offers = statusBreakdown.find(s => s.status === 'offer')?.count || 0;
   const rejections = statusBreakdown.find(s => s.status === 'rejected')?.count || 0;
 
-  // Insights from manual engine
-  const insights = calculateInsights(apps);
+  // Insights — only fetch fields needed, not full rows with job_description
+  const insightApps = db.prepare('SELECT status, platform, applied_date, last_updated FROM applications WHERE user_id=?').all(uid);
+  const insights = calculateInsights(insightApps);
 
   res.json({
     total,
     responseRate: total > 0 ? Math.round(((interviews + offers + rejections) / total) * 100) : 0,
     interviewRate: total > 0 ? Math.round((interviews / total) * 100) : 0,
     offerRate: interviews > 0 ? Math.round((offers / interviews) * 100) : 0,
-    avgResponseDays,
-    fastestResponse,
+    avgResponseDays: responseStats.avg_response_days,
+    fastestResponse: responseStats.fastest_response,
     statusBreakdown,
     platformBreakdown,
     priorityBreakdown,

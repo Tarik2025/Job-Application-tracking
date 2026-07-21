@@ -12,6 +12,8 @@ export function startEmailScheduler() {
       try {
         const results = await fetchAllAccounts(user_id);
         const total = results.reduce((sum, r) => sum + (r.fetched || 0), 0);
+        // Update last_fetched per account after scheduler run
+        db.prepare('UPDATE email_accounts SET last_fetched = CURRENT_TIMESTAMP WHERE user_id = ?').run(user_id);
         if (total > 0) console.log(`  ✓ User ${user_id}: ${total} new job emails classified`);
       } catch (err) {
         console.error(`  ✕ User ${user_id}: ${err.message}`);

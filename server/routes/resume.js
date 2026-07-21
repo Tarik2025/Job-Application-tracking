@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import pdf from 'pdf-parse';
-import { readFileSync } from 'fs';
+import { readFileSync, unlink } from 'fs';
 import db from '../db.js';
 import { auth } from '../middleware/auth.js';
 import { matchResume } from '../services/gemini.js';
@@ -30,10 +30,18 @@ router.post('/upload', upload.single('resume'), async (req, res) => {
     const data = await pdf(readFileSync(req.file.path));
     const analysis = analyzeResume(data.text);
     const skillsJson = JSON.stringify(analysis.skills);
-
-    const r = db.prepare('INSERT INTO resumes (user_id,filename,extracted_text,skills) VALUES (?,?,?,?)').run(req.user.id, req.file.originalname, data.text, skillsJson);
+    const r = db.prepare('INSERT INTO resumes (user_id,filename,file_path,extracted_text,skills) VALUES (?,?,?,?,?)').run(req.user.id, req.file.originalname, req.file.path, data.text, skillsJson);
     res.json({ id: r.lastInsertRowid, filename: req.file.originalname, analysis });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error('POST /upload:', err); res.status(500).json({ error: 'Internal server error' }); }
+});
+
+// Delete resume — removes DB record and file from disk
+router.delete('/:id', (req, res) => {
+  const resume = db.prepare('SELECT file_path FROM resumes WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (!resume) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM resumes WHERE id=? AND user_id=?').run(req.params.id, req.user.id);
+  if (resume.file_path) unlink(resume.file_path, () => {});
+  res.json({ message: 'Deleted' });
 });
 
 // Analyze existing resume

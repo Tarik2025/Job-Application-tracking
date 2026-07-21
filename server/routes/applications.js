@@ -25,22 +25,28 @@ router.get('/', (req, res) => {
   if (work_mode) { where += ' AND a.work_mode = ?'; params.push(work_mode); }
   if (search) { where += ' AND (a.company LIKE ? OR a.role LIKE ? OR a.location LIKE ? OR a.notes LIKE ? OR a.contact_person LIKE ?)'; params.push(`%${search}%`,`%${search}%`,`%${search}%`,`%${search}%`,`%${search}%`); }
   if (tag) { where += ' AND a.id IN (SELECT application_id FROM application_tags at2 JOIN tags t ON at2.tag_id=t.id WHERE t.name=? AND t.user_id=?)'; params.push(tag, req.user.id); }
+  // days_min/days_max moved into SQL so total count and pagination are accurate
+  if (days_min) { where += " AND (julianday('now') - julianday(a.applied_date)) >= ?"; params.push(Number(days_min)); }
+  if (days_max) { where += " AND (julianday('now') - julianday(a.applied_date)) <= ?"; params.push(Number(days_max)); }
 
   const total = db.prepare(`SELECT COUNT(*) as c FROM applications a ${where}`).get(...params).c;
   let rows = db.prepare(`SELECT a.* FROM applications a ${where} ORDER BY a.${sort} LIMIT ? OFFSET ?`).all(...params, limit, offset);
 
-  // Enrich with days_since, tags
+  // Batch-fetch tags for all rows in one query — avoids N+1
+  const rowIds = rows.map(r => r.id);
+  const tagMap = {};
+  if (rowIds.length) {
+    const placeholders = rowIds.map(() => '?').join(',');
+    db.prepare(`SELECT at2.application_id,t.name,t.color FROM application_tags at2 JOIN tags t ON at2.tag_id=t.id WHERE at2.application_id IN (${placeholders})`).all(...rowIds)
+      .forEach(t => { (tagMap[t.application_id] = tagMap[t.application_id] || []).push({ name: t.name, color: t.color }); });
+  }
+
   rows = rows.map(r => {
     const today = new Date(); today.setHours(0,0,0,0);
     const applied = new Date(r.applied_date); applied.setHours(0,0,0,0);
     const days_since = Math.round((today - applied) / 86400000);
-    const tags = db.prepare('SELECT t.name,t.color FROM application_tags at2 JOIN tags t ON at2.tag_id=t.id WHERE at2.application_id=?').all(r.id);
-    return { ...r, days_since, tags };
+    return { ...r, days_since, tags: tagMap[r.id] || [] };
   });
-
-  // Filter by days if requested
-  if (days_min) rows = rows.filter(r => r.days_since >= Number(days_min));
-  if (days_max) rows = rows.filter(r => r.days_since <= Number(days_max));
 
   res.json(paginatedResponse(rows, total, page, limit));
 });
@@ -61,40 +67,49 @@ router.get('/:id', (req, res) => {
   res.json({ ...app, days_since, tags, history, notes, reminders });
 });
 
-// ===== CREATE (with duplicate check) =====
+// ===== CREATE (with duplicate check, wrapped in transaction) =====
 router.post('/', (req, res) => {
   const { company, role, status, platform, job_url, job_description, salary_expected, salary_offered, location, work_mode, contact_person, contact_email, notes, priority, tags } = req.body;
   if (!company || !role) return res.status(400).json({ error: 'Company and role required' });
 
   // Duplicate check
-  const duplicate = db.prepare('SELECT id,status,applied_date FROM applications WHERE user_id=? AND company LIKE ? AND role LIKE ?').get(req.user.id, company, role);
+  const duplicate = db.prepare('SELECT id,status,applied_date FROM applications WHERE user_id=? AND company=? AND role=?').get(req.user.id, company, role);
   if (duplicate) return res.status(409).json({ error: 'Duplicate found', existing: duplicate });
 
-  const r = db.prepare('INSERT INTO applications (user_id,company,role,status,platform,job_url,job_description,salary_expected,salary_offered,location,work_mode,contact_person,contact_email,notes,priority) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(req.user.id, company, role, status||'applied', platform||null, job_url||null, job_description||null, salary_expected||null, salary_offered||null, location||null, work_mode||null, contact_person||null, contact_email||null, notes||null, priority||'medium');
+  const createApp = db.transaction(() => {
+    const r = db.prepare('INSERT INTO applications (user_id,company,role,status,platform,job_url,job_description,salary_expected,salary_offered,location,work_mode,contact_person,contact_email,notes,priority) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(req.user.id, company, role, status||'applied', platform||null, job_url||null, job_description||null, salary_expected||null, salary_offered||null, location||null, work_mode||null, contact_person||null, contact_email||null, notes||null, priority||'medium');
+    const appId = r.lastInsertRowid;
 
-  const appId = r.lastInsertRowid;
+    // Log initial status
+    db.prepare('INSERT INTO status_history (application_id,user_id,from_status,to_status,note) VALUES (?,?,?,?,?)').run(appId, req.user.id, null, status||'applied', 'Application created');
 
-  // Log initial status
-  db.prepare('INSERT INTO status_history (application_id,user_id,from_status,to_status,note) VALUES (?,?,?,?,?)').run(appId, req.user.id, null, status||'applied', 'Application created');
-
-  // Add tags
-  if (tags?.length) {
-    for (const t of tags) {
-      let tag = db.prepare('SELECT id FROM tags WHERE user_id=? AND name=?').get(req.user.id, t);
-      if (!tag) { db.prepare('INSERT INTO tags (user_id,name) VALUES (?,?)').run(req.user.id, t); tag = db.prepare('SELECT id FROM tags WHERE user_id=? AND name=?').get(req.user.id, t); }
-      db.prepare('INSERT OR IGNORE INTO application_tags (application_id,tag_id) VALUES (?,?)').run(appId, tag.id);
+    // Add tags — INSERT OR IGNORE prevents race condition on duplicate tag names
+    if (tags?.length) {
+      for (const t of tags) {
+        db.prepare('INSERT OR IGNORE INTO tags (user_id,name) VALUES (?,?)').run(req.user.id, t);
+        const tag = db.prepare('SELECT id FROM tags WHERE user_id=? AND name=?').get(req.user.id, t);
+        if (tag) db.prepare('INSERT OR IGNORE INTO application_tags (application_id,tag_id) VALUES (?,?)').run(appId, tag.id);
+      }
     }
+
+    // Auto-create 7-day follow-up reminder
+    const remindDate = new Date(Date.now() + 7*86400000).toISOString();
+    db.prepare('INSERT INTO reminders (user_id,application_id,title,remind_at) VALUES (?,?,?,?)').run(req.user.id, appId, `Follow up with ${company}`, remindDate);
+
+    return appId;
+  });
+
+  try {
+    const appId = createApp();
+    logAudit(req.user.id, 'CREATE', 'application', appId, { company, role }, req.ip);
+    res.json(db.prepare('SELECT * FROM applications WHERE id=?').get(appId));
+  } catch (err) {
+    console.error('POST /applications:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
-
-  // Auto-create reminder if no response in 7 days
-  const remindDate = new Date(Date.now() + 7*86400000).toISOString();
-  db.prepare('INSERT INTO reminders (user_id,application_id,title,remind_at) VALUES (?,?,?,?)').run(req.user.id, appId, `Follow up with ${company}`, remindDate);
-
-  logAudit(req.user.id, 'CREATE', 'application', appId, { company, role }, req.ip);
-  res.json(db.prepare('SELECT * FROM applications WHERE id=?').get(appId));
 });
 
-// ===== UPDATE (with status history tracking) =====
+// ===== UPDATE (with status history tracking, wrapped in transaction) =====
 router.put('/:id', (req, res) => {
   const app = db.prepare('SELECT * FROM applications WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
   if (!app) return res.status(404).json({ error: 'Not found' });
@@ -102,32 +117,41 @@ router.put('/:id', (req, res) => {
   const fields = ['company','role','status','platform','job_url','job_description','salary_expected','salary_offered','location','work_mode','contact_person','contact_email','notes','priority'];
   const updates = []; const values = [];
   for (const f of fields) { if (req.body[f] !== undefined) { updates.push(`${f} = ?`); values.push(req.body[f]); } }
-  if (updates.length === 0) return res.status(400).json({ error: 'No fields' });
+  if (updates.length === 0 && !req.body.tags) return res.status(400).json({ error: 'No fields' });
 
-  // Track status change
-  if (req.body.status && req.body.status !== app.status) {
-    db.prepare('INSERT INTO status_history (application_id,user_id,from_status,to_status,note) VALUES (?,?,?,?,?)').run(app.id, req.user.id, app.status, req.body.status, req.body.status_note || null);
-    if (['interview','offer','rejected'].includes(req.body.status) && !app.response_date) {
-      updates.push('response_date = CURRENT_TIMESTAMP');
+  const updateApp = db.transaction(() => {
+    if (updates.length > 0) {
+      // Track status change
+      if (req.body.status && req.body.status !== app.status) {
+        db.prepare('INSERT INTO status_history (application_id,user_id,from_status,to_status,note) VALUES (?,?,?,?,?)').run(app.id, req.user.id, app.status, req.body.status, req.body.status_note || null);
+        if (['interview','offer','rejected'].includes(req.body.status) && !app.response_date) {
+          updates.push('response_date = CURRENT_TIMESTAMP');
+        }
+      }
+      updates.push('last_updated = CURRENT_TIMESTAMP');
+      values.push(req.params.id);
+      db.prepare(`UPDATE applications SET ${updates.join(', ')} WHERE id = ?`).run(...values);
     }
-  }
 
-  updates.push('last_updated = CURRENT_TIMESTAMP');
-  values.push(req.params.id);
-  db.prepare(`UPDATE applications SET ${updates.join(', ')} WHERE id = ?`).run(...values);
-
-  // Update tags if provided
-  if (req.body.tags) {
-    db.prepare('DELETE FROM application_tags WHERE application_id=?').run(app.id);
-    for (const t of req.body.tags) {
-      let tag = db.prepare('SELECT id FROM tags WHERE user_id=? AND name=?').get(req.user.id, t);
-      if (!tag) { db.prepare('INSERT INTO tags (user_id,name) VALUES (?,?)').run(req.user.id, t); tag = db.prepare('SELECT id FROM tags WHERE user_id=? AND name=?').get(req.user.id, t); }
-      db.prepare('INSERT OR IGNORE INTO application_tags (application_id,tag_id) VALUES (?,?)').run(app.id, tag.id);
+    // Update tags if provided — INSERT OR IGNORE prevents race condition
+    if (req.body.tags) {
+      db.prepare('DELETE FROM application_tags WHERE application_id=?').run(app.id);
+      for (const t of req.body.tags) {
+        db.prepare('INSERT OR IGNORE INTO tags (user_id,name) VALUES (?,?)').run(req.user.id, t);
+        const tag = db.prepare('SELECT id FROM tags WHERE user_id=? AND name=?').get(req.user.id, t);
+        if (tag) db.prepare('INSERT OR IGNORE INTO application_tags (application_id,tag_id) VALUES (?,?)').run(app.id, tag.id);
+      }
     }
-  }
+  });
 
-  logAudit(req.user.id, 'UPDATE', 'application', Number(req.params.id), req.body, req.ip);
-  res.json(db.prepare('SELECT * FROM applications WHERE id=?').get(req.params.id));
+  try {
+    updateApp();
+    logAudit(req.user.id, 'UPDATE', 'application', Number(req.params.id), req.body, req.ip);
+    res.json(db.prepare('SELECT * FROM applications WHERE id=?').get(req.params.id));
+  } catch (err) {
+    console.error('PUT /applications/:id:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // ===== DELETE =====
@@ -143,13 +167,16 @@ router.delete('/:id', (req, res) => {
 router.patch('/bulk/status', (req, res) => {
   const { ids, status } = req.body;
   if (!ids?.length || !status) return res.status(400).json({ error: 'ids and status required' });
+  if (ids.length > 100) return res.status(400).json({ error: 'Max 100 ids per bulk operation' });
   const stmt = db.prepare('UPDATE applications SET status=?, last_updated=CURRENT_TIMESTAMP WHERE id=? AND user_id=?');
   const hist = db.prepare('INSERT INTO status_history (application_id,user_id,from_status,to_status,note) VALUES (?,?,?,?,?)');
   let updated = 0;
-  for (const id of ids) {
-    const app = db.prepare('SELECT status FROM applications WHERE id=? AND user_id=?').get(id, req.user.id);
-    if (app) { stmt.run(status, id, req.user.id); hist.run(id, req.user.id, app.status, status, 'Bulk update'); updated++; }
-  }
+  db.transaction(() => {
+    for (const id of ids) {
+      const app = db.prepare('SELECT status FROM applications WHERE id=? AND user_id=?').get(id, req.user.id);
+      if (app) { stmt.run(status, id, req.user.id); hist.run(id, req.user.id, app.status, status, 'Bulk update'); updated++; }
+    }
+  })();
   logAudit(req.user.id, 'BULK_UPDATE', 'application', null, { ids, status }, req.ip);
   res.json({ updated });
 });
@@ -157,9 +184,12 @@ router.patch('/bulk/status', (req, res) => {
 router.post('/bulk/delete', (req, res) => {
   const { ids } = req.body;
   if (!ids?.length) return res.status(400).json({ error: 'ids required' });
+  if (ids.length > 100) return res.status(400).json({ error: 'Max 100 ids per bulk operation' });
   const stmt = db.prepare('DELETE FROM applications WHERE id=? AND user_id=?');
   let deleted = 0;
-  for (const id of ids) { const r = stmt.run(id, req.user.id); deleted += r.changes; }
+  db.transaction(() => {
+    for (const id of ids) { const r = stmt.run(id, req.user.id); deleted += r.changes; }
+  })();
   logAudit(req.user.id, 'BULK_DELETE', 'application', null, { ids }, req.ip);
   res.json({ deleted });
 });
@@ -202,6 +232,7 @@ router.get('/reminders/list', (req, res) => {
 router.post('/reminders', (req, res) => {
   const { application_id, title, remind_at } = req.body;
   if (!title || !remind_at) return res.status(400).json({ error: 'Title and remind_at required' });
+  if (isNaN(new Date(remind_at).getTime())) return res.status(400).json({ error: 'Invalid remind_at date' });
   const r = db.prepare('INSERT INTO reminders (user_id,application_id,title,remind_at) VALUES (?,?,?,?)').run(req.user.id, application_id||null, title, remind_at);
   res.json({ id: r.lastInsertRowid });
 });
@@ -249,10 +280,16 @@ router.get('/report/weekly', (req, res) => {
 router.get('/export', (req, res) => {
   const apps = db.prepare('SELECT id,company,role,status,platform,location,work_mode,salary_expected,salary_offered,priority,applied_date,last_updated,response_date,contact_person,contact_email,notes FROM applications WHERE user_id=? ORDER BY applied_date DESC').all(req.user.id);
 
+  // Sanitize a CSV cell: wrap in quotes, escape inner quotes, prefix formula chars to prevent injection
+  const csvCell = (v) => {
+    const s = (v == null ? '' : String(v)).replace(/"/g, '""');
+    const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+    return `"${safe}"`;
+  };
   const headers = 'S.No,Company,Role,Status,Platform,Location,Work Mode,Expected Salary,Offered Salary,Priority,Applied Date,Last Updated,Response Date,Days Since,Contact,Contact Email,Notes';
   const rows = apps.map((a, i) => {
     const days = Math.floor((Date.now() - new Date(a.applied_date).getTime()) / 86400000);
-    return `${i+1},"${a.company}","${a.role}",${a.status},${a.platform||''},${a.location||''},${a.work_mode||''},${a.salary_expected||''},${a.salary_offered||''},${a.priority},${a.applied_date?.split('T')[0]||''},${a.last_updated?.split('T')[0]||''},${a.response_date?.split('T')[0]||''},${days},${a.contact_person||''},${a.contact_email||''},"${(a.notes||'').replace(/"/g,'""')}"`;
+    return [i+1, a.company, a.role, a.status, a.platform||'', a.location||'', a.work_mode||'', a.salary_expected||'', a.salary_offered||'', a.priority, a.applied_date?.split('T')[0]||'', a.last_updated?.split('T')[0]||'', a.response_date?.split('T')[0]||'', days, a.contact_person||'', a.contact_email||'', a.notes||''].map(csvCell).join(',');
   });
 
   res.setHeader('Content-Type', 'text/csv');
@@ -267,7 +304,7 @@ router.get('/:id/predict', async (req, res) => {
     if (!app) return res.status(404).json({ error: 'Not found' });
     const days = Math.floor((Date.now() - new Date(app.last_updated).getTime()) / 86400000);
     res.json(await predictStatus(app, days));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error('GET predict:', err); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 router.get('/:id/follow-up', async (req, res) => {
@@ -275,7 +312,7 @@ router.get('/:id/follow-up', async (req, res) => {
     const app = db.prepare('SELECT * FROM applications WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
     if (!app) return res.status(404).json({ error: 'Not found' });
     res.json(await generateFollowUp(app));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { console.error('GET follow-up:', err); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 export default router;
