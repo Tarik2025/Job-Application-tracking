@@ -15,7 +15,7 @@ if (!process.env.ENCRYPTION_KEY || process.env.ENCRYPTION_KEY.length < 32) {
   process.exit(1);
 }
 
-import db from './db.js';
+import pool, { initDb } from './db.js';
 import { startEmailScheduler } from './services/scheduler.js';
 import authRoutes from './routes/auth.js';
 import collegeRoutes from './routes/colleges.js';
@@ -93,31 +93,34 @@ app.use('/api/search', searchRoutes);
 app.use('/api/advanced', advancedRoutes);
 
 // Chrome extension — save job with full consistency (status_history + reminder + duplicate check)
-// Uses the same auth middleware as all other routes — enforces token_version + is_active checks
-app.post('/api/extension/job', _auth, doubleCsrfProtection, (req, res) => {
+app.post('/api/extension/job', _auth, doubleCsrfProtection, async (req, res) => {
   const ct = String(req.headers['content-type'] || '');
   if (!ct.includes('application/json')) return res.status(415).json({ error: 'Content-Type must be application/json' });
+  const client = await pool.connect();
   try {
     const { company, role, platform, job_url, job_description, location } = req.body;
     if (!company || !role) return res.status(400).json({ error: 'Company and role required' });
 
-    // Duplicate check
-    const duplicate = db.prepare('SELECT id,status FROM applications WHERE user_id=? AND company=? AND role=?').get(req.user.id, company, role);
-    if (duplicate) return res.status(409).json({ error: 'Already saved', existing: duplicate });
+    const dup = await client.query('SELECT id,status FROM applications WHERE user_id=$1 AND company=$2 AND role=$3', [req.user.id, company, role]);
+    if (dup.rows[0]) return res.status(409).json({ error: 'Already saved', existing: dup.rows[0] });
 
-    const save = db.transaction(() => {
-      const r = db.prepare('INSERT INTO applications (user_id,company,role,platform,job_url,job_description,location) VALUES (?,?,?,?,?,?,?)').run(req.user.id, company, role, platform||null, job_url||null, job_description||null, location||null);
-      const appId = r.lastInsertRowid;
-      db.prepare('INSERT INTO status_history (application_id,user_id,from_status,to_status,note) VALUES (?,?,?,?,?)').run(appId, req.user.id, null, 'applied', 'Saved from Chrome extension');
-      const remindDate = new Date(Date.now() + 7 * 86400000).toISOString();
-      db.prepare('INSERT INTO reminders (user_id,application_id,title,remind_at) VALUES (?,?,?,?)').run(req.user.id, appId, `Follow up with ${company}`, remindDate);
-      return appId;
-    });
-    const appId = save();
+    await client.query('BEGIN');
+    const r = await client.query(
+      'INSERT INTO applications (user_id,company,role,platform,job_url,job_description,location) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',
+      [req.user.id, company, role, platform||null, job_url||null, job_description||null, location||null]
+    );
+    const appId = r.rows[0].id;
+    await client.query('INSERT INTO status_history (application_id,user_id,from_status,to_status,note) VALUES ($1,$2,$3,$4,$5)', [appId, req.user.id, null, 'applied', 'Saved from Chrome extension']);
+    const remindDate = new Date(Date.now() + 7 * 86400000).toISOString();
+    await client.query('INSERT INTO reminders (user_id,application_id,title,remind_at) VALUES ($1,$2,$3,$4)', [req.user.id, appId, `Follow up with ${company}`, remindDate]);
+    await client.query('COMMIT');
     res.json({ id: appId });
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('POST /api/extension/job:', err);
     res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
   }
 });
 
@@ -128,7 +131,12 @@ app.get('/api/csrf-token', (req, res) => res.json({ csrfToken: generateToken(req
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  startEmailScheduler();
+initDb().then(() => {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    startEmailScheduler();
+  });
+}).catch(err => {
+  console.error('Failed to initialize database:', err);
+  process.exit(1);
 });
