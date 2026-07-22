@@ -1,0 +1,71 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [ main, 'ci-cd-workflow', 'muhammadtarik23-*' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Server smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install server dependencies
+        run: npm --prefix server ci
+
+      - name: Set ephemeral secrets
+        run: |
+          echo "JWT_SECRET=$(node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\")" >> $GITHUB_ENV
+          echo "ENCRYPTION_KEY=$(node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\")" >> $GITHUB_ENV
+          echo "CSRF_SECRET=$(node -e \"console.log(require('crypto').randomBytes(24).toString('hex'))\")" >> $GITHUB_ENV
+
+      - name: Start server
+        run: |
+          node server/index.js &
+          n=0
+          until curl -sSf http://localhost:3001/api/health || [ $n -ge 15 ]; do
+            n=$((n+1))
+            echo "waiting for server... ($n)"
+            sleep 2
+          done
+          curl -sSf http://localhost:3001/api/health
+
+      - name: Run server smoke tests
+        run: npm --prefix server run test:ci
+
+  deploy:
+    name: Deploy (Vercel + Render)
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy front-end to Vercel (if token)
+        if: ${{ secrets.VERCEL_TOKEN }}
+        uses: amondnet/vercel-action@v20
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-args: --prod
+          working-directory: ./client
+
+      - name: Trigger Render deploy for server (if secrets)
+        if: ${{ secrets.RENDER_API_KEY && secrets.RENDER_SERVICE_ID }}
+        run: |
+          echo "Triggering Render deploy..."
+          curl -X POST "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            -sS
+
+      - name: Notify on success
+        run: echo "Deploy triggered (if secrets were set)."
