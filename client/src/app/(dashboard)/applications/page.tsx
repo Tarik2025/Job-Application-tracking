@@ -74,7 +74,15 @@ export default function ApplicationsPage() {
               variant="secondary"
               size="sm"
               leftIcon={<Download size={14} />}
-              onClick={() => applicationsApi.exportCsv()}
+              onClick={async () => {
+                const blob = await applicationsApi.exportCsv();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'applications.csv';
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
             >
               Export
             </Button>

@@ -73,20 +73,20 @@ A full-stack personal job application tracking system with Gemini AI for email c
 ## Tech Stack
 
 | Layer | Technology | Purpose |
-|-------|-----------|---------|
+|-------|-----------|---------| 
 | **Frontend** | Next.js 15, React 19 | App Router, SSR, client components |
 | **Styling** | Tailwind CSS 4, CSS Variables | Theming (dark/light), responsive design |
 | **Animations** | Framer Motion | Page transitions, layout animations |
 | **Icons** | Lucide React | UI icons |
 | **Backend** | Express 5, Node.js | REST API server |
-| **Database** | better-sqlite3 (SQLite) | Embedded database, WAL mode |
+| **Database** | PostgreSQL (Neon) | Serverless cloud PostgreSQL, free tier |
 | **AI** | Google Gemini 2.0 Flash | Email classification, resume matching, interview prep |
 | **Email** | nodemailer (SMTP), imap (IMAP) | Send reset emails, fetch inbox |
 | **Auth** | JWT, bcryptjs | Token-based auth with httpOnly cookies |
 | **PDF** | pdf-parse | Resume text extraction |
 | **Scheduling** | node-cron | Auto email fetch every 30 min |
 | **Extension** | Chrome Manifest V3 | Job scraping from portals |
-| **Deploy** | Vercel (frontend), Railway (backend) | Production hosting |
+| **Deploy** | Vercel (frontend), Render.com (backend), Neon (database) | 100% free hosting |
 
 ---
 
@@ -123,13 +123,13 @@ Career-Copilot/
 │   │       ├── api.js         # All API calls (single source of truth)
 │   │       └── theme.js       # Dark/light theme provider
 │   ├── package.json
-│   ├── next.config.mjs        # API rewrites to backend
+│   ├── next.config.mjs        # API rewrites to backend via NEXT_PUBLIC_API_URL
 │   ├── postcss.config.mjs
 │   └── jsconfig.json          # Path aliases (@/components, @/lib)
 │
 ├── server/                     # Express 5 Backend
 │   ├── index.js               # Server entry point, middleware, routes
-│   ├── db.js                  # SQLite schema, migrations, seed data
+│   ├── db.js                  # PostgreSQL pool, schema init, seed data
 │   ├── middleware/
 │   │   └── auth.js            # JWT authentication middleware
 │   ├── routes/
@@ -164,7 +164,7 @@ Career-Copilot/
 │
 ├── .gitignore
 ├── package.json               # Root package.json
-├── railway.toml               # Railway deployment config
+├── railway.toml               # Railway deployment config (legacy)
 └── README.md
 ```
 
@@ -176,6 +176,7 @@ Career-Copilot/
 - Node.js 18+
 - npm or yarn
 - Google Gemini API key (free at https://aistudio.google.com/apikey)
+- Neon PostgreSQL database (free at https://neon.tech)
 
 ### 1. Clone & Install
 
@@ -196,7 +197,10 @@ Create `server/.env`:
 
 ```env
 PORT=3001
-JWT_SECRET=your-random-secret-key-here
+DATABASE_URL=postgresql://<user>:<password>@<host>/neondb?sslmode=require
+JWT_SECRET=your-random-secret-key-here-32-chars-min
+ENCRYPTION_KEY=your-random-32-char-encryption-key
+CSRF_SECRET=your-random-32-char-csrf-secret
 GEMINI_API_KEY=your-gemini-api-key
 FRONTEND_URL=http://localhost:3000
 
@@ -208,7 +212,7 @@ SMTP_PASS=your-16-char-app-password
 
 # Admin Panel
 ADMIN_EMAIL=your-admin-email@example.com
-ADMIN_PASSWORD=your-secure-admin-password
+ADMIN_PASSWORD_HASH=your-bcrypt-hashed-password
 ADMIN_SECRET=your-secret-key
 ```
 
@@ -234,7 +238,10 @@ cd client && npm run dev
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `PORT` | Backend server port | Yes (default: 3001) |
-| `JWT_SECRET` | Secret for JWT token signing | Yes |
+| `DATABASE_URL` | Neon PostgreSQL connection string | Yes |
+| `JWT_SECRET` | Secret for JWT token signing (32+ chars) | Yes |
+| `ENCRYPTION_KEY` | Key for encrypting IMAP passwords (32+ chars) | Yes |
+| `CSRF_SECRET` | Secret for CSRF token generation (32+ chars) | Yes |
 | `GEMINI_API_KEY` | Google Gemini API key for AI features | Yes (fallback: manual rules) |
 | `FRONTEND_URL` | Frontend URL for CORS & email links | Yes |
 | `SMTP_HOST` | SMTP server for sending emails | Optional |
@@ -242,7 +249,7 @@ cd client && npm run dev
 | `SMTP_USER` | Email address for sending | Optional |
 | `SMTP_PASS` | Gmail 16-char app password | Optional |
 | `ADMIN_EMAIL` | Admin login email | Yes |
-| `ADMIN_PASSWORD` | Admin login password | Yes |
+| `ADMIN_PASSWORD_HASH` | bcrypt hash of admin password | Yes |
 | `ADMIN_SECRET` | Admin secret key (extra auth layer) | Yes |
 
 **Getting Gmail App Password:**
@@ -256,7 +263,7 @@ cd client && npm run dev
 
 ### Authentication Flow
 ```
-User → POST /auth/register → bcrypt hash → SQLite → JWT cookie → Dashboard
+User → POST /auth/register → bcrypt hash → PostgreSQL (Neon) → JWT cookie → Dashboard
 User → POST /auth/login → verify password → JWT cookie (7 day expiry)
 Admin → POST /admin/login → email + password + secret_key → admin_token cookie
 ```
@@ -399,7 +406,7 @@ Manual rules detect:
 
 ### How It Works
 1. User connects Gmail via **App Password** (not regular password)
-2. System stores IMAP credentials in `email_accounts` table
+2. System stores IMAP credentials in `email_accounts` table (encrypted)
 3. `node-cron` scheduler runs `fetchAllAccounts()` every 30 minutes
 4. For each account: connects via IMAP → fetches last 7 days → max 50 emails
 5. Filters using job-related keywords (application, interview, offer, reject, etc.)
@@ -462,9 +469,9 @@ The system recognizes 200+ skills across categories:
 ## Admin Panel
 
 ### Access
-Admin credentials are stored in environment variables (not in code):
+Admin credentials are set via environment variables:
 - `ADMIN_EMAIL` — Your admin email
-- `ADMIN_PASSWORD` — Your admin password
+- `ADMIN_PASSWORD_HASH` — bcrypt hash of your admin password
 - `ADMIN_SECRET` — Secret key for extra security
 
 Set these in `server/.env` (never commit this file).
@@ -478,28 +485,55 @@ Set these in `server/.env` (never commit this file).
 
 ---
 
-## Deployment
+## Deployment (100% Free)
 
-### Backend → Railway
+### Architecture
+```
+Browser → Vercel (Next.js) → Render.com (Express API) → Neon (PostgreSQL)
+```
 
-1. Push code to GitHub
-2. Go to https://railway.app → New Project → Deploy from GitHub
-3. Set root directory to `/server`
-4. Add environment variables: `JWT_SECRET`, `GEMINI_API_KEY`, `FRONTEND_URL`, `SMTP_*`
-5. Deploy — Railway auto-detects Node.js
+### 1. Database → Neon (free tier)
 
-`railway.toml` is already configured.
+1. Go to https://neon.tech → Create account → New project
+2. Copy the connection string: `postgresql://<user>:<password>@<host>/neondb?sslmode=require`
+3. Use this as `DATABASE_URL` in your backend env vars
+4. Tables are auto-created on first server startup via `initDb()`
 
-### Frontend → Vercel
+### 2. Backend → Render.com (free tier)
 
-1. Go to https://vercel.com → Import from GitHub
-2. Set root directory to `client`
-3. Framework: Next.js (auto-detected)
-4. Update `client/next.config.mjs` rewrite destination to Railway URL:
-   ```js
-   rewrites: () => [{ source: '/api/:path*', destination: 'https://your-railway-url.up.railway.app/api/:path*' }]
+1. Go to https://render.com → New → Web Service
+2. Connect your GitHub repo (`https://github.com/Tarik2025/Job-Application-tracking`)
+3. Set:
+   - Root directory: `server`
+   - Build command: `npm install`
+   - Start command: `node index.js`
+4. Add environment variables:
    ```
-5. Deploy
+   DATABASE_URL=postgresql://...
+   JWT_SECRET=...
+   ENCRYPTION_KEY=...
+   CSRF_SECRET=...
+   GEMINI_API_KEY=...
+   FRONTEND_URL=https://your-app.vercel.app
+   ADMIN_EMAIL=...
+   ADMIN_PASSWORD_HASH=...
+   ADMIN_SECRET=...
+   ```
+5. Deploy — note your Render URL (e.g. `https://your-app.onrender.com`)
+
+> Free tier spins down after 15 min inactivity — cold start is ~30s on first request.
+
+### 3. Frontend → Vercel (free tier)
+
+1. Go to https://vercel.com → New Project → Import from GitHub
+2. Set root directory to `client`, framework: Next.js (auto-detected)
+3. Add environment variable:
+   ```
+   NEXT_PUBLIC_API_URL=https://your-app.onrender.com
+   ```
+4. Deploy
+
+> `next.config.mjs` already proxies all `/api/*` requests to `NEXT_PUBLIC_API_URL`.
 
 ---
 
@@ -507,18 +541,18 @@ Set these in `server/.env` (never commit this file).
 
 ### Core Tables
 | Table | Purpose |
-|-------|---------|
+|-------|---------| 
 | `users` | User accounts with full profile |
 | `applications` | Job applications (company, role, status, etc.) |
 | `status_history` | Every status change logged |
 | `emails` | Classified emails |
-| `email_accounts` | Connected IMAP accounts |
+| `email_accounts` | Connected IMAP accounts (credentials encrypted) |
 | `resumes` | Uploaded resume data |
 | `interview_prep` | Generated prep plans |
 
 ### Organization Tables
 | Table | Purpose |
-|-------|---------|
+|-------|---------| 
 | `tags` | Custom user tags |
 | `application_tags` | Many-to-many tag assignments |
 | `notes_history` | Notes per application |
@@ -528,7 +562,7 @@ Set these in `server/.env` (never commit this file).
 
 ### Intelligence Tables
 | Table | Purpose |
-|-------|---------|
+|-------|---------| 
 | `blacklist` | Blocked companies |
 | `goals` | Application goals (daily/weekly/monthly) |
 | `activity_feed` | All user actions timeline |
@@ -536,11 +570,13 @@ Set these in `server/.env` (never commit this file).
 
 ### Reference Tables
 | Table | Purpose |
-|-------|---------|
+|-------|---------| 
 | `colleges` | Searchable college list (auto-grows) |
 | `stacks` | Tech stack options |
 | `user_stacks` | User-stack associations |
 | `follow_ups` | Scheduled follow-up messages |
+
+> All tables use `SERIAL PRIMARY KEY`, `TIMESTAMPTZ` for timestamps, and are created automatically on server startup via `initDb()` in `server/db.js`.
 
 ---
 
@@ -562,7 +598,6 @@ Set these in `server/.env` (never commit this file).
 - [ ] **Networking tracker** — Track referrals, contacts, coffee chats
 - [ ] **Application scoring** — AI rates your fit before you apply
 - [ ] **Dashboard widgets** — Customizable dashboard layout
-- [ ] **Dark/light per-component** — More theme customization
 
 ### Low Priority / Nice-to-Have
 - [ ] **Browser notifications** — Desktop push for reminders
@@ -577,9 +612,9 @@ Set these in `server/.env` (never commit this file).
 - [ ] **GraphQL API** — Alternative to REST for flexible queries
 
 ### Infrastructure
-- [ ] **PostgreSQL migration** — For production scalability
+- [x] **PostgreSQL migration** — Migrated to Neon serverless PostgreSQL ✅
 - [ ] **Redis caching** — Cache analytics, reduce DB load
-- [ ] **Rate limiting** — Protect API from abuse
+- [ ] **Rate limiting** — Protect API from abuse (basic rate limiting already in place)
 - [ ] **E2E tests** — Playwright/Cypress test suite
 - [ ] **CI/CD pipeline** — GitHub Actions for lint, test, deploy
 - [ ] **Docker support** — Containerized deployment
