@@ -1,0 +1,45 @@
+# CI pipeline (place this file at .github/workflows/ci.yml to enable GitHub Actions)
+# Steps: install server deps, start server, run simple smoke tests against API endpoints.
+
+name: CI
+
+on:
+  push:
+    branches: [ main, '**' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  server-smoke-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install server dependencies
+        run: npm --prefix server ci
+
+      - name: Set ephemeral secrets
+        run: |
+          echo "JWT_SECRET=$(node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\")" >> $GITHUB_ENV
+          echo "ENCRYPTION_KEY=$(node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\")" >> $GITHUB_ENV
+          echo "CSRF_SECRET=$(node -e \"console.log(require('crypto').randomBytes(24).toString('hex'))\")" >> $GITHUB_ENV
+
+      - name: Start server
+        run: |
+          node server/index.js &
+
+          n=0
+          until curl -sSf http://localhost:3001/api/health || [ $n -ge 15 ]; do
+            n=$((n+1))
+            echo "waiting for server... ($n)"
+            sleep 2
+          done
+          curl -sSf http://localhost:3001/api/health
+
+      - name: Run server smoke tests
+        run: npm --prefix server run test:ci
