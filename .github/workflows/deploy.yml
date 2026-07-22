@@ -1,0 +1,37 @@
+name: Deploy to Kubernetes (Helm)
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Restore kubeconfig
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          echo "$KUBE_CONFIG_DATA" | base64 --decode > $HOME/.kube/config
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+
+      - name: Deploy Helm chart
+        env:
+          SERVER_IMAGE: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}-server:latest
+          CLIENT_IMAGE: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}-client:latest
+        run: |
+          helm upgrade --install career-copilot k8s/helm/career-copilot --namespace default --create-namespace \
+            --set server.image=$SERVER_IMAGE --set client.image=$CLIENT_IMAGE

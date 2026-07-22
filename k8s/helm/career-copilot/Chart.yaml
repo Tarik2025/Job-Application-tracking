@@ -1,0 +1,5 @@
+apiVersion: v2
+name: career-copilot
+description: Helm chart for Career Copilot (server + client)
+version: 0.1.0
+appVersion: "1.0.0"

@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "career-copilot.fullname" . }}-server
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: career-copilot-server
+  template:
+    metadata:
+      labels:
+        app: career-copilot-server
+    spec:
+      containers:
+        - name: server
+          image: {{ .Values.server.image | quote }}
+          ports:
+            - containerPort: {{ .Values.server.port }}
+          env:
+            - name: NODE_ENV
+              value: "production"
+          resources: {{ toYaml .Values.server.resources | nindent 12 }}

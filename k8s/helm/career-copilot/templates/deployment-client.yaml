@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "career-copilot.fullname" . }}-client
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: career-copilot-client
+  template:
+    metadata:
+      labels:
+        app: career-copilot-client
+    spec:
+      containers:
+        - name: client
+          image: {{ .Values.client.image | quote }}
+          ports:
+            - containerPort: {{ .Values.client.port }}
+          resources: {{ toYaml .Values.client.resources | nindent 12 }}
