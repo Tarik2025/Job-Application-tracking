@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -8,7 +8,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { Eye, EyeOff, Mail, Lock, ArrowLeft, Zap, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, User, ArrowLeft, Zap, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { authApi } from '@/services/api/auth.api';
 import { queryKeys } from '@/services/queryKeys';
@@ -18,7 +18,7 @@ import { ROUTES } from '@/constants';
 import { getErrorMessage } from '@/utils';
 
 const schema = z.object({
-  email: z.string().email('Enter a valid email'),
+  identifier: z.string().min(1, 'Enter your email or username'),
   password: z.string().min(1, 'Password is required'),
 });
 
@@ -29,12 +29,12 @@ const REASON_MESSAGES: Record<string, string> = {
   account_deactivated: 'Your account has been deactivated. Contact support.',
 };
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [showPassword, setShowPassword] = useState(false);
-  const reason = searchParams.get('reason');
+  const reason = searchParams?.get('reason') ?? null;
   const reasonMessage = reason ? REASON_MESSAGES[reason] : null;
 
   useEffect(() => {
@@ -46,7 +46,7 @@ export default function LoginPage() {
   });
 
   const { mutate, isPending } = useMutation({
-    mutationFn: authApi.login,
+    mutationFn: (d: FormData) => authApi.login({ email: d.identifier, password: d.password }),
     onSuccess: (data) => {
       queryClient.setQueryData(queryKeys.auth.me(), { user: data.user });
       router.push(ROUTES.DASHBOARD);
@@ -60,7 +60,7 @@ export default function LoginPage() {
       <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-[var(--bg-secondary)] border-r border-[var(--border)]">
         {/* Background orbs */}
         <div className="absolute inset-0 pointer-events-none" aria-hidden>
-          <div className="absolute top-[-10%] left-[10%] w-[400px] h-[400px] rounded-full bg-indigo-600/12 blur-[100px]" />
+          <div className="absolute top-[-10%] left-[10%] w-[400px] h-[400px] rounded-full bg-indigo-600/[0.12] blur-[100px]" />
           <div className="absolute bottom-[10%] right-[-5%] w-[300px] h-[300px] rounded-full bg-purple-600/10 blur-[80px]" />
         </div>
 
@@ -147,13 +147,13 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit((d) => mutate(d))} className="space-y-4">
             <Input
-              label="Email address"
-              type="email"
-              placeholder="you@example.com"
-              autoComplete="email"
-              leftElement={<Mail size={14} />}
-              error={errors.email?.message}
-              {...register('email')}
+              label="Email or username"
+              type="text"
+              placeholder="you@example.com or @username"
+              autoComplete="username"
+              leftElement={<User size={14} />}
+              error={errors.identifier?.message}
+              {...register('identifier')}
             />
 
             <div>
@@ -199,5 +199,13 @@ export default function LoginPage() {
         </motion.div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

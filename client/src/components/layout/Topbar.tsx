@@ -9,7 +9,6 @@ import {
   Moon,
   LogOut,
   User,
-  Settings,
   Download,
 } from 'lucide-react';
 import { cn } from '@/utils/cn';
@@ -96,13 +95,8 @@ export function Topbar({ sidebarCollapsed }: TopbarProps) {
 
   const userMenuItems = [
     {
-      label: 'Profile',
+      label: 'Profile & Settings',
       icon: <User size={13} />,
-      onClick: () => router.push(ROUTES.PROFILE),
-    },
-    {
-      label: 'Settings',
-      icon: <Settings size={13} />,
       onClick: () => router.push(ROUTES.SETTINGS),
     },
     {

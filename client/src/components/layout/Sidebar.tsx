@@ -105,7 +105,7 @@ function NavItemRow({
         'flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] font-medium',
         'transition-all duration-150 group relative',
         active
-          ? 'bg-[var(--primary)]/12 text-[var(--primary)]'
+          ? 'bg-[var(--primary)]/[0.12] text-[var(--primary)]'
           : 'text-[var(--text-secondary)] hover:text-[var(--text)] hover:bg-[var(--input)]',
         collapsed && 'justify-center px-2',
       )}
@@ -204,7 +204,7 @@ export function Sidebar() {
       {/* User section */}
       <div className="p-2 border-t border-[var(--border)] shrink-0">
         <Link
-          href={ROUTES.PROFILE}
+          href={ROUTES.SETTINGS}
           className={cn(
             'flex items-center gap-2.5 p-2 rounded-lg',
             'hover:bg-[var(--input)] transition-colors',
@@ -234,19 +234,17 @@ export function Sidebar() {
       </div>
 
       {/* Collapse toggle */}
-      <button
-        onClick={() => setCollapsed(!collapsed)}
-        className={cn(
-          'absolute -right-3 top-[72px] w-6 h-6 rounded-full',
-          'bg-[var(--card)] border border-[var(--border)] shadow-sm',
-          'flex items-center justify-center',
-          'text-[var(--text-secondary)] hover:text-[var(--text)]',
-          'transition-colors cursor-pointer z-10',
-        )}
-        aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-      >
-        {collapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
-      </button>
+      <div className={cn('px-2 pb-2 pt-1 shrink-0 border-t border-[var(--border)]', collapsed ? 'flex justify-center' : 'flex justify-end')}>
+        <Tooltip content={collapsed ? 'Expand' : 'Collapse'} side="right">
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="w-7 h-7 rounded-md flex items-center justify-center text-[var(--text-secondary)] hover:text-[var(--text)] hover:bg-[var(--input)] transition-colors cursor-pointer"
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+          </button>
+        </Tooltip>
+      </div>
     </motion.aside>
   );
 }

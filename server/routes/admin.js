@@ -249,6 +249,100 @@ router.get('/audit', (req, res) => {
   res.json(paginatedResponse(rows, total, page, limit));
 });
 
+// ===== USER PROXY — full dashboard data as admin =====
+
+router.get('/users/:id/applications', adminGuard, adminLimiter, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
+  const { page, limit, offset } = paginate(req.query);
+  const { status, search, platform, priority } = req.query;
+  let where = 'WHERE user_id=?';
+  const params = [id];
+  if (status) { where += ' AND status=?'; params.push(status); }
+  if (platform) { where += ' AND platform=?'; params.push(platform); }
+  if (priority) { where += ' AND priority=?'; params.push(priority); }
+  if (search) { where += ' AND (company LIKE ? OR role LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
+  const total = db.prepare(`SELECT COUNT(*) as c FROM applications ${where}`).get(...params).c;
+  const rows = db.prepare(`SELECT * FROM applications ${where} ORDER BY applied_date DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
+  res.json(paginatedResponse(rows, total, page, limit));
+});
+
+router.get('/users/:id/analytics', adminGuard, adminLimiter, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
+  const apps = db.prepare('SELECT * FROM applications WHERE user_id=?').all(id);
+  const total = apps.length;
+  const responded = apps.filter(a => ['interview','offer','rejected'].includes(a.status)).length;
+  const interviewed = apps.filter(a => ['interview','offer'].includes(a.status)).length;
+  const offered = apps.filter(a => a.status === 'offer').length;
+  const responseRate = total ? Math.round((responded / total) * 100) : 0;
+  const interviewRate = total ? Math.round((interviewed / total) * 100) : 0;
+  const offerRate = total ? Math.round((offered / total) * 100) : 0;
+  const statusBreakdown = db.prepare('SELECT status, COUNT(*) as count FROM applications WHERE user_id=? GROUP BY status').all(id);
+  const platformBreakdown = db.prepare('SELECT platform, COUNT(*) as count FROM applications WHERE user_id=? AND platform IS NOT NULL GROUP BY platform').all(id);
+  const monthlyApps = db.prepare("SELECT strftime('%Y-%m', applied_date) as month, COUNT(*) as count FROM applications WHERE user_id=? GROUP BY month ORDER BY month DESC LIMIT 12").all(id);
+  res.json({ total, responseRate, interviewRate, offerRate, statusBreakdown, platformBreakdown, monthlyApps, insights: { total, responseRate, avgResponseDays: 0 } });
+});
+
+router.get('/users/:id/streak', adminGuard, adminLimiter, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
+  const dates = db.prepare("SELECT DISTINCT date(applied_date) as d FROM applications WHERE user_id=? ORDER BY d DESC").all(id).map(r => r.d);
+  let streak = 0;
+  const today = new Date().toISOString().split('T')[0];
+  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+  if (dates[0] === today || dates[0] === yesterday) {
+    streak = 1;
+    for (let i = 1; i < dates.length; i++) {
+      const diff = (new Date(dates[i-1]) - new Date(dates[i])) / 86400000;
+      if (diff === 1) streak++; else break;
+    }
+  }
+  const thisWeek = db.prepare("SELECT COUNT(*) as c FROM applications WHERE user_id=? AND applied_date >= date('now','-7 days')").get(id).c;
+  const thisMonth = db.prepare("SELECT COUNT(*) as c FROM applications WHERE user_id=? AND applied_date >= date('now','-30 days')").get(id).c;
+  res.json({ current_streak: streak, longest_streak: streak, total_days_applied: dates.length, this_week: thisWeek, this_month: thisMonth });
+});
+
+router.get('/users/:id/goals', adminGuard, adminLimiter, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
+  const goals = db.prepare('SELECT * FROM goals WHERE user_id=? ORDER BY created_at DESC').all(id);
+  res.json(goals.map(g => ({ ...g, progress: g.target_count > 0 ? Math.min(Math.round((g.current_count / g.target_count) * 100), 100) : 0 })));
+});
+
+router.get('/users/:id/reminders', adminGuard, adminLimiter, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
+  res.json(db.prepare('SELECT r.*,a.company,a.role FROM reminders r LEFT JOIN applications a ON r.application_id=a.id WHERE r.user_id=? ORDER BY r.remind_at ASC').all(id));
+});
+
+// ===== USER RESUMES =====
+router.get('/users/:id/resumes', adminGuard, adminLimiter, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
+  res.json(db.prepare('SELECT id,filename,skills,uploaded_at FROM resumes WHERE user_id=? ORDER BY uploaded_at DESC').all(id));
+});
+
+router.delete('/users/:id/resumes/:rid', adminGuard, adminLimiter, (req, res) => {
+  const id = Number(req.params.id);
+  const rid = Number(req.params.rid);
+  if (!Number.isInteger(id) || id < 1 || !Number.isInteger(rid) || rid < 1) return res.status(400).json({ error: 'Invalid ID' });
+  const r = db.prepare('DELETE FROM resumes WHERE id=? AND user_id=?').run(rid, id);
+  if (!r.changes) return res.status(404).json({ error: 'Not found' });
+  logAudit(0, 'ADMIN_DELETE_RESUME', 'resume', rid, { user_id: id }, req.ip);
+  res.json({ message: 'Deleted' });
+});
+
+// ===== USER ACTIVITY =====
+router.get('/users/:id/activity', adminGuard, adminLimiter, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid ID' });
+  const { page, limit, offset } = paginate(req.query);
+  const total = db.prepare('SELECT COUNT(*) as c FROM activity_feed WHERE user_id=?').get(id).c;
+  const rows = db.prepare('SELECT * FROM activity_feed WHERE user_id=? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(id, limit, offset);
+  res.json(paginatedResponse(rows, total, page, limit));
+});
+
 // ===== EMAILS (all) =====
 router.get('/emails', (req, res) => {
   const { page, limit, offset } = paginate(req.query);

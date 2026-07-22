@@ -13,6 +13,7 @@ export interface RegisterPayload {
   email: string;
   password: string;
   name: string;
+  username?: string;
   phone?: string;
   country_code?: string;
   gender?: string;
@@ -90,4 +91,7 @@ export const authApi = {
 
   checkEmail: (email: string) =>
     post<{ exists: boolean }>('/auth/check-email', { email }),
+
+  checkUsername: (username: string) =>
+    post<{ available: boolean; suggestions: string[] }>('/auth/check-username', { username }),
 };

@@ -120,6 +120,34 @@ export const adminApi = {
   deleteApplication: (id: number) =>
     del<{ message: string }>(`/admin/applications/${id}`),
 
+  // ─── User detail (resumes + activity) ───────────────────────────────────
+
+  getUserApplications: (userId: number, params: Record<string, unknown> = {}) =>
+    get<PaginatedResponse<Application & { user_name: string; user_email: string }>>(
+      `/admin/users/${userId}/applications${buildQuery(params)}`,
+    ),
+
+  getUserAnalytics: (userId: number) =>
+    get<import('@/types/api.types').AnalyticsDashboard>(`/admin/users/${userId}/analytics`),
+
+  getUserStreak: (userId: number) =>
+    get<import('@/types/api.types').StreakData>(`/admin/users/${userId}/streak`),
+
+  getUserGoals: (userId: number) =>
+    get<import('@/types/api.types').Goal[]>(`/admin/users/${userId}/goals`),
+
+  getUserReminders: (userId: number) =>
+    get<import('@/types/api.types').Reminder[]>(`/admin/users/${userId}/reminders`),
+
+  getUserResumes: (userId: number) =>
+    get<Array<{ id: number; filename: string; skills?: string; uploaded_at: string }>>(`/admin/users/${userId}/resumes`),
+
+  deleteUserResume: (userId: number, resumeId: number) =>
+    del<{ message: string }>(`/admin/users/${userId}/resumes/${resumeId}`),
+
+  getUserActivity: (userId: number, params: { page?: number; limit?: number } = {}) =>
+    get<PaginatedResponse<AuditEntry>>(`/admin/users/${userId}/activity${buildQuery(params as Record<string, unknown>)}`),
+
   // ─── Emails ────────────────────────────────────────────────────────────────
 
   listEmails: (params: AdminEmailsQuery = {}) =>

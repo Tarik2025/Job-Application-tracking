@@ -20,7 +20,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      router.replace(ROUTES.LOGIN);
+      router.replace(ROUTES.HOME);
     }
   }, [isAuthenticated, isLoading, router]);
 

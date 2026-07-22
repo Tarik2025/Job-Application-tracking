@@ -438,6 +438,9 @@ const migrations = [
   `ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0`,
   `ALTER TABLE users ADD COLUMN reset_token TEXT`,
   `ALTER TABLE users ADD COLUMN reset_token_expires INTEGER`,
+  // username — unique, nullable for existing users
+  `ALTER TABLE users ADD COLUMN username TEXT`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username) WHERE username IS NOT NULL`,
   // emails table -- imap_uid for stable server-side deduplication
   `ALTER TABLE emails ADD COLUMN imap_uid TEXT`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_imap_uid ON emails(user_id, imap_uid) WHERE imap_uid IS NOT NULL`,

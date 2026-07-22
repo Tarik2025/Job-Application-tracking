@@ -17,14 +17,20 @@ const DUMMY_HASH = '$2a$12$000000000000000000000uGm.dXxRHQJJkCpXxN9LWDuHpvGjIBO'
 // Register
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, name, phone, country_code, gender, dob, user_type, college, degree, branch, year_of_study, passout_year, company, designation, experience, skills, preferred_role, city, state, country, linkedin, github, portfolio, stacks } = req.body;
+    const { email, password, name, username, phone, country_code, gender, dob, user_type, college, degree, branch, year_of_study, passout_year, company, designation, experience, skills, preferred_role, city, state, country, linkedin, github, portfolio, stacks } = req.body;
 
     if (!email || !password || !name) return res.status(400).json({ error: 'Name, email, and password required' });
-    // Email validation
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email format' });
-    // Sanitize inputs
     const cleanName = name.trim().slice(0, 100);
     const cleanEmail = email.trim().toLowerCase().slice(0, 255);
+    // Username validation
+    let cleanUsername = null;
+    if (username) {
+      cleanUsername = username.trim().toLowerCase().slice(0, 30);
+      if (!/^[a-z0-9_]{3,30}$/.test(cleanUsername)) return res.status(400).json({ error: 'Username must be 3-30 chars, letters/numbers/underscore only' });
+      const existingUsername = db.prepare('SELECT id FROM users WHERE username = ?').get(cleanUsername);
+      if (existingUsername) return res.status(400).json({ error: 'Username already taken' });
+    }
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
     if (!/[A-Z]/.test(password)) return res.status(400).json({ error: 'Password needs an uppercase letter' });
     if (!/[0-9]/.test(password)) return res.status(400).json({ error: 'Password needs a number' });
@@ -48,8 +54,8 @@ router.post('/register', async (req, res) => {
       const dup = db.prepare('SELECT id FROM users WHERE email=?').get(cleanEmail);
       if (dup) throw Object.assign(new Error('Email already registered'), { code: 'DUPLICATE_EMAIL' });
       const result = db.prepare(
-        `INSERT INTO users (email,password,name,phone,country_code,gender,dob,user_type,college,degree,branch,year_of_study,passout_year,company,designation,experience,skills,preferred_role,city,state,country,linkedin,github,portfolio) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-      ).run(cleanEmail, hash, cleanName, phone||null, country_code||'+91', gender||null, dob||null, user_type||null, college||null, degree||null, branch||null, year_of_study||null, passout_year||null, company||null, designation||null, experience||null, skills||null, preferred_role||null, city||null, state||null, country||'India', linkedin||null, github||null, portfolio||null);
+        `INSERT INTO users (email,password,name,username,phone,country_code,gender,dob,user_type,college,degree,branch,year_of_study,passout_year,company,designation,experience,skills,preferred_role,city,state,country,linkedin,github,portfolio) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).run(cleanEmail, hash, cleanName, cleanUsername, phone||null, country_code||'+91', gender||null, dob||null, user_type||null, college||null, degree||null, branch||null, year_of_study||null, passout_year||null, company||null, designation||null, experience||null, skills||null, preferred_role||null, city||null, state||null, country||'India', linkedin||null, github||null, portfolio||null);
 
       const userId = result.lastInsertRowid;
 
@@ -82,8 +88,12 @@ router.post('/register', async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-    const user = db.prepare('SELECT id,email,name,password,is_active,token_version FROM users WHERE email = ?').get(email);
+    if (!email || !password) return res.status(400).json({ error: 'Email/username and password required' });
+    // Accept email or username
+    const isEmail = email.includes('@');
+    const user = isEmail
+      ? db.prepare('SELECT id,email,name,password,is_active,token_version FROM users WHERE email = ?').get(email.trim().toLowerCase())
+      : db.prepare('SELECT id,email,name,password,is_active,token_version FROM users WHERE username = ?').get(email.trim().toLowerCase());
     // Always run bcrypt.compare to prevent timing-based account enumeration
     const passwordMatch = await bcrypt.compare(password, user?.password || DUMMY_HASH);
     if (!user || !passwordMatch) return res.status(401).json({ error: 'Invalid credentials' });
@@ -220,6 +230,22 @@ router.post('/reset-password', async (req, res) => {
   } catch { res.status(400).json({ error: 'Invalid or expired token' }); }
 });
 
+
+// Check username availability with suggestions
+router.post('/check-username', (req, res) => {
+  const { username } = req.body;
+  if (!username) return res.json({ available: false, suggestions: [] });
+  const clean = username.trim().toLowerCase().slice(0, 30);
+  if (!/^[a-z0-9_]{3,30}$/.test(clean)) return res.json({ available: false, suggestions: [] });
+  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(clean);
+  if (!existing) return res.json({ available: true, suggestions: [] });
+  // Generate 3 suggestions: append random numbers
+  const suggestions = [1, 2, 3].map((i) => {
+    const suffix = Math.floor(Math.random() * 900 + 100);
+    return `${clean}${suffix}`;
+  }).filter((s) => !db.prepare('SELECT id FROM users WHERE username = ?').get(s));
+  res.json({ available: false, suggestions });
+});
 
 // Check if email exists (for signup validation) — auth required to prevent enumeration
 router.post('/check-email', auth, (req, res) => {

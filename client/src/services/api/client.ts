@@ -64,7 +64,7 @@ export class RateLimitError extends ApiError {
 
 export class NetworkError extends ApiError {
   constructor() {
-    super('Network error. Please check your connection.', 0, 'NETWORK_ERROR');
+    super('Cannot reach the server. Make sure the backend is running.', 0, 'NETWORK_ERROR');
     this.name = 'NetworkError';
   }
 }
@@ -75,11 +75,14 @@ const CSRF_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 
 // ─── Redirect helper (safe for SSR) ──────────────────────────────────────────
 
-function redirectToLogin(reason?: string): void {
+function redirectToHome(reason?: string): void {
   if (typeof window === 'undefined') return;
   const url = reason
-    ? `/login?reason=${encodeURIComponent(reason)}`
-    : '/login';
+    ? `/?reason=${encodeURIComponent(reason)}`
+    : '/';
+  // Avoid redirect loop if already on home/login/signup
+  const current = window.location.pathname;
+  if (current === '/' || current === '/login' || current === '/signup') return;
   window.location.href = url;
 }
 
@@ -129,7 +132,14 @@ client.interceptors.request.use(
 let csrfRetryInFlight = false;
 
 client.interceptors.response.use(
-  (response: AxiosResponse) => response,
+  (response: AxiosResponse) => {
+    // If the proxy returned an HTML page instead of JSON, the backend is down
+    const contentType = String(response.headers['content-type'] ?? '');
+    if (contentType.includes('text/html')) {
+      return Promise.reject(new NetworkError());
+    }
+    return response;
+  },
   async (error) => {
     const status: number = error.response?.status ?? 0;
     const data = error.response?.data ?? {};
@@ -147,12 +157,14 @@ client.interceptors.response.use(
       const isAuthRoute =
         originalConfig.url?.includes('/auth/login') ||
         originalConfig.url?.includes('/auth/register') ||
+        originalConfig.url?.includes('/auth/me') ||
         originalConfig.url?.includes('/auth/forgot-password') ||
         originalConfig.url?.includes('/auth/reset-password') ||
-        originalConfig.url?.includes('/admin/login');
+        originalConfig.url?.includes('/admin/login') ||
+        originalConfig.url?.includes('/admin/me');
 
       if (!isAuthRoute) {
-        redirectToLogin('session_expired');
+        redirectToHome('session_expired');
       }
 
       return Promise.reject(new AuthError(message));
@@ -162,7 +174,7 @@ client.interceptors.response.use(
     if (status === 403) {
       const isAccountDeactivated = message.toLowerCase().includes('deactivated');
       if (isAccountDeactivated) {
-        redirectToLogin('account_deactivated');
+        redirectToHome('account_deactivated');
         return Promise.reject(new ForbiddenError(message));
       }
 

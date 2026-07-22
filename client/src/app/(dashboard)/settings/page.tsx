@@ -129,7 +129,7 @@ export default function SettingsPage() {
             onClick={() => setTab(t.id)}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               tab === t.id
-                ? 'bg-[var(--surface)] text-[var(--text)] shadow-sm'
+                ? 'bg-[var(--card)] text-[var(--text)] shadow-sm'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text)]'
             }`}
           >

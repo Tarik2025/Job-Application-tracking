@@ -21,9 +21,13 @@ export async function fetchCsrfToken(): Promise<string> {
   fetchPromise = fetch('/api/csrf-token', {
     credentials: 'include',
     cache: 'no-store',
+    headers: { Accept: 'application/json' },
   })
     .then((res) => {
-      if (!res.ok) throw new Error('Failed to fetch CSRF token');
+      const contentType = res.headers.get('content-type') ?? '';
+      if (!res.ok || !contentType.includes('application/json')) {
+        throw new Error('Backend server is not reachable');
+      }
       return res.json();
     })
     .then((data: { csrfToken: string }) => {

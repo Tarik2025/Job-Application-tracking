@@ -1,13 +1,14 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useRef, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion, useInView, useScroll, useTransform } from 'framer-motion';
 import {
   Briefcase, BarChart2, Mail, FileText, Zap, Shield,
   ArrowRight, CheckCircle, Star, TrendingUp, Users, Award,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAuth } from '@/providers/AuthProvider';
 import { AuthProvider } from '@/providers/AuthProvider';
 import { ROUTES } from '@/constants';
@@ -16,7 +17,7 @@ import { ROUTES } from '@/constants';
 
 const fadeUp = {
   hidden: { opacity: 0, y: 30 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] } },
+  show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: "easeOut" as const } },
 };
 
 const stagger = {
@@ -88,7 +89,7 @@ const steps = [
 // ─── Section wrapper with scroll-triggered animation ─────────────────────────
 
 function Section({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  const ref = useRef(null);
+  const ref = useRef<HTMLDivElement>(null);
   const inView = useInView(ref, { once: true, margin: '-80px' });
   return (
     <motion.div
@@ -109,8 +110,8 @@ function Orbs() {
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden>
       <div className="absolute top-[-10%] left-[20%] w-[500px] h-[500px] rounded-full bg-indigo-600/10 blur-[120px]" />
-      <div className="absolute top-[30%] right-[-5%] w-[400px] h-[400px] rounded-full bg-purple-600/8 blur-[100px]" />
-      <div className="absolute bottom-[10%] left-[-5%] w-[350px] h-[350px] rounded-full bg-blue-600/8 blur-[100px]" />
+      <div className="absolute top-[30%] right-[-5%] w-[400px] h-[400px] rounded-full bg-purple-600/[0.08] blur-[100px]" />
+      <div className="absolute bottom-[10%] left-[-5%] w-[350px] h-[350px] rounded-full bg-blue-600/[0.08] blur-[100px]" />
     </div>
   );
 }
@@ -118,7 +119,7 @@ function Orbs() {
 // ─── Animated counter ─────────────────────────────────────────────────────────
 
 function StatItem({ icon, value, label }: { icon: React.ReactNode; value: string; label: string }) {
-  const ref = useRef(null);
+  const ref = useRef<HTMLDivElement>(null);
   const inView = useInView(ref, { once: true });
   return (
     <motion.div
@@ -151,8 +152,9 @@ function StatItem({ icon, value, label }: { icon: React.ReactNode; value: string
 
 function LandingContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { isAuthenticated, isLoading } = useAuth();
-  const heroRef = useRef(null);
+  const heroRef = useRef<HTMLElement>(null);
   const { scrollYProgress } = useScroll({ target: heroRef, offset: ['start start', 'end start'] });
   const heroY = useTransform(scrollYProgress, [0, 1], ['0%', '20%']);
   const heroOpacity = useTransform(scrollYProgress, [0, 0.8], [1, 0]);
@@ -161,7 +163,14 @@ function LandingContent() {
     if (!isLoading && isAuthenticated) router.replace(ROUTES.DASHBOARD);
   }, [isAuthenticated, isLoading, router]);
 
-  if (isLoading || isAuthenticated) return null;
+  useEffect(() => {
+    const reason = searchParams?.get('reason');
+    if (reason === 'session_expired') toast.warning('Your session has expired. Please sign in again.');
+    if (reason === 'account_deactivated') toast.error('Your account has been deactivated. Contact support.');
+  }, [searchParams]);
+
+  // Don't flash blank page — only hide when confirmed authenticated
+  if (isAuthenticated) return null;
 
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] overflow-x-hidden">
@@ -208,7 +217,7 @@ function LandingContent() {
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.5 }}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-[var(--primary)]/30 bg-[var(--primary)]/8 text-[var(--primary)] text-xs font-medium mb-8"
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-[var(--primary)]/30 bg-[var(--primary)]/[0.08] text-[var(--primary)] text-xs font-medium mb-8"
           >
             <Zap size={11} className="fill-current" />
             AI-Powered Job Application Tracker
@@ -218,7 +227,7 @@ function LandingContent() {
           <motion.h1
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 0.7, delay: 0.1, ease: "easeOut" as const }}
             className="text-5xl sm:text-6xl lg:text-7xl font-bold leading-[1.08] tracking-tight mb-6"
           >
             Your job search,{' '}
@@ -227,7 +236,7 @@ function LandingContent() {
               <motion.span
                 initial={{ scaleX: 0 }}
                 animate={{ scaleX: 1 }}
-                transition={{ duration: 0.6, delay: 0.8, ease: [0.22, 1, 0.36, 1] }}
+                transition={{ duration: 0.6, delay: 0.8, ease: "easeOut" as const }}
                 className="absolute -bottom-1 left-0 right-0 h-0.5 bg-[var(--primary)]/40 origin-left rounded-full"
               />
             </span>
@@ -285,7 +294,7 @@ function LandingContent() {
           transition={{ delay: 1.2 }}
           className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5"
         >
-          <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-widest">Scroll</span>
+          <span className="text-[10px] text-[var(--text-secondary)] uppercase tracking-widest">Scroll</span>
           <motion.div
             animate={{ y: [0, 6, 0] }}
             transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
@@ -325,7 +334,7 @@ function LandingContent() {
                 variants={fadeUp}
                 custom={i}
                 whileHover={{ y: -4, transition: { duration: 0.2 } }}
-                className="group p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] hover:border-[var(--primary)]/30 hover:bg-[var(--card)] transition-colors cursor-default"
+                className="group p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] hover:border-[var(--primary)]/30 hover:bg-[var(--bg-secondary)] transition-all cursor-default"
               >
                 <div className={`w-11 h-11 rounded-xl ${f.bg} ${f.color} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
                   {f.icon}
@@ -372,7 +381,7 @@ function LandingContent() {
       {/* ── CTA / Auth section ── */}
       <section className="py-28 px-6 relative overflow-hidden">
         <div className="absolute inset-0 pointer-events-none" aria-hidden>
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-[var(--primary)]/6 blur-[120px]" />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-[var(--primary)]/[0.06] blur-[120px]" />
         </div>
         <div className="relative max-w-2xl mx-auto text-center">
           <Section>
@@ -452,7 +461,9 @@ function LandingContent() {
 export default function HomePage() {
   return (
     <AuthProvider>
-      <LandingContent />
+      <Suspense>
+        <LandingContent />
+      </Suspense>
     </AuthProvider>
   );
 }

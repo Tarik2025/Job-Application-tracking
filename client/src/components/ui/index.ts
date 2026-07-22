@@ -85,3 +85,7 @@ export type {
   ActionMenuProps,
   ActionMenuItem,
 } from './Tooltip';
+
+// Combobox (single + multi)
+export { Combobox, MultiCombobox } from './Combobox';
+export type { ComboboxProps, MultiComboboxProps } from './Combobox';
