@@ -237,10 +237,12 @@ export async function initDb() {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       filename TEXT NOT NULL,
       file_path TEXT,
+      cloudinary_public_id TEXT,
       extracted_text TEXT,
       skills TEXT,
       uploaded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
+    ALTER TABLE resumes ADD COLUMN IF NOT EXISTS cloudinary_public_id TEXT;
 
     CREATE TABLE IF NOT EXISTS follow_ups (
       id SERIAL PRIMARY KEY,

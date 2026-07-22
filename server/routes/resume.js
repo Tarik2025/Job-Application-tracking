@@ -1,24 +1,21 @@
 import { Router } from 'express';
 import multer from 'multer';
+import { CloudinaryStorage } from 'multer-storage-cloudinary';
+import { v2 as cloudinary } from 'cloudinary';
 import pdf from 'pdf-parse';
-import { readFile, unlink } from 'fs/promises';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import pool from '../db.js';
 import { auth } from '../middleware/auth.js';
 import { doubleCsrfProtection } from '../middleware/csrf.js';
 import { matchResume } from '../services/gemini.js';
 import { analyzeResume } from '../services/manual.js';
 
-const router = Router();
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const UPLOADS_DIR = resolve(__dirname, '..', 'uploads');
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
-function safeUploadPath(filePath) {
-  const normalized = resolve(UPLOADS_DIR, resolve(filePath).replace(/^.*[/\\]/, ''));
-  if (!normalized.startsWith(UPLOADS_DIR)) throw new Error('Path traversal detected');
-  return normalized;
-}
+const router = Router();
 
 router.use((req, res, next) => {
   if (['POST','PUT','PATCH','DELETE'].includes(req.method)) {
@@ -32,8 +29,13 @@ router.use((req, res, next) => {
 
 router.use(auth);
 
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: { folder: 'career-copilot/resumes', resource_type: 'raw', format: 'pdf' },
+});
+
 const upload = multer({
-  dest: resolve(__dirname, '..', 'uploads'),
+  storage,
   limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (_, f, cb) => {
     if (f.mimetype !== 'application/pdf') return cb(Object.assign(new Error('Only PDF files allowed'), { status: 415 }));
@@ -51,21 +53,23 @@ router.post('/upload', doubleCsrfProtection, upload.single('resume'), async (req
     if (!req.file) return res.status(400).json({ error: 'PDF required' });
     const { rows: countRows } = await pool.query('SELECT COUNT(*) as c FROM resumes WHERE user_id=$1', [req.user.id]);
     if (parseInt(countRows[0].c) >= 10) {
-      await unlink(safeUploadPath(req.file.path)).catch(() => {});
+      await cloudinary.uploader.destroy(req.file.filename, { resource_type: 'raw' }).catch(() => {});
       return res.status(400).json({ error: 'Maximum 10 resumes allowed. Delete one first.' });
     }
     const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._\- ]/g, '_').slice(0, 200);
-    const safePath = safeUploadPath(req.file.path);
-    const data = await pdf(await readFile(safePath));
+    // Download buffer from Cloudinary to extract text
+    const response = await fetch(req.file.path);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const data = await pdf(buffer);
     const analysis = analyzeResume(data.text);
     const skillsJson = JSON.stringify(analysis.skills);
     const { rows } = await pool.query(
-      'INSERT INTO resumes (user_id,filename,file_path,extracted_text,skills) VALUES ($1,$2,$3,$4,$5) RETURNING id',
-      [req.user.id, safeName, safePath, data.text, skillsJson]
+      'INSERT INTO resumes (user_id,filename,cloudinary_public_id,extracted_text,skills) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+      [req.user.id, safeName, req.file.filename, data.text, skillsJson]
     );
     res.json({ id: rows[0].id, filename: safeName, analysis });
   } catch (err) {
-    if (req.file?.path) { try { await unlink(safeUploadPath(req.file.path)); } catch {} }
+    if (req.file?.filename) { await cloudinary.uploader.destroy(req.file.filename, { resource_type: 'raw' }).catch(() => {}); }
     console.error('POST /upload:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -74,10 +78,12 @@ router.post('/upload', doubleCsrfProtection, upload.single('resume'), async (req
 router.delete('/:id', doubleCsrfProtection, async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
-  const { rows } = await pool.query('SELECT file_path FROM resumes WHERE id=$1 AND user_id=$2', [id, req.user.id]);
+  const { rows } = await pool.query('SELECT cloudinary_public_id FROM resumes WHERE id=$1 AND user_id=$2', [id, req.user.id]);
   if (!rows[0]) return res.status(404).json({ error: 'Not found' });
   await pool.query('DELETE FROM resumes WHERE id=$1 AND user_id=$2', [id, req.user.id]);
-  if (rows[0].file_path) { try { await unlink(safeUploadPath(rows[0].file_path)); } catch {} }
+  if (rows[0].cloudinary_public_id) {
+    await cloudinary.uploader.destroy(rows[0].cloudinary_public_id, { resource_type: 'raw' }).catch(() => {});
+  }
   res.json({ message: 'Deleted' });
 });
 
