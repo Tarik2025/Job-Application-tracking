@@ -1,5 +1,7 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -31,11 +33,15 @@ const REASON_MESSAGES: Record<string, string> = {
 
 export default function LoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [showPassword, setShowPassword] = useState(false);
-  const reason = searchParams.get('reason');
+  const [reason, setReason] = useState<string | null>(null);
   const reasonMessage = reason ? REASON_MESSAGES[reason] : null;
+
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    setReason(sp.get('reason'));
+  }, []);
 
   useEffect(() => {
     if (reasonMessage) toast.warning(reasonMessage);
