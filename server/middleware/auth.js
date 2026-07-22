@@ -14,7 +14,8 @@ export async function auth(req, res, next) {
     const now = Math.floor(Date.now() / 1000);
     if (payload.exp - now < 86400) {
       const newToken = jwt.sign({ id: payload.id, email: payload.email, name: payload.name, tv: row.token_version }, process.env.JWT_SECRET, { expiresIn: '7d' });
-      res.cookie('token', newToken, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
+      const isProd = process.env.NODE_ENV === 'production';
+      res.cookie('token', newToken, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: isProd ? 'none' : 'lax', secure: isProd });
     }
     req.user = payload;
     next();

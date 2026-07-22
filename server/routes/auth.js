@@ -2,7 +2,6 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { randomBytes, timingSafeEqual } from 'crypto';
-import { unlink } from 'fs/promises';
 import rateLimit from 'express-rate-limit';
 import pool, { logAudit } from '../db.js';
 import { auth } from '../middleware/auth.js';
@@ -194,11 +193,13 @@ router.delete('/me', auth, async (req, res) => {
   const { rows } = await pool.query('SELECT password FROM users WHERE id = $1', [req.user.id]);
   if (!(await bcrypt.compare(password, rows[0].password))) return res.status(401).json({ error: 'Incorrect password' });
 
-  const { rows: resumes } = await pool.query('SELECT file_path FROM resumes WHERE user_id=$1', [req.user.id]);
+  const { rows: resumes } = await pool.query('SELECT cloudinary_public_id FROM resumes WHERE user_id=$1', [req.user.id]);
   await logAudit(req.user.id, 'DELETE_ACCOUNT', 'user', req.user.id, null, req.ip);
   await pool.query('DELETE FROM users WHERE id = $1', [req.user.id]);
-  for (const r of resumes) { if (r.file_path) unlink(r.file_path).catch(() => {}); }
-  res.clearCookie('token');
+  const { v2 as cloudinary } = await import('cloudinary');
+  for (const r of resumes) { if (r.cloudinary_public_id) cloudinary.uploader.destroy(r.cloudinary_public_id, { resource_type: 'raw' }).catch(() => {}); }
+  const isProd = process.env.NODE_ENV === 'production';
+  res.clearCookie('token', { sameSite: isProd ? 'none' : 'lax', secure: isProd });
   res.json({ message: 'Account deleted' });
 });
 
