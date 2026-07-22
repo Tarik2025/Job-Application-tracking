@@ -1,14 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { Eye, EyeOff, Mail, Lock, ArrowLeft, Zap } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, ArrowLeft, Zap, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { authApi } from '@/services/api/auth.api';
 import { queryKeys } from '@/services/queryKeys';
@@ -24,10 +24,22 @@ const schema = z.object({
 
 type FormData = z.infer<typeof schema>;
 
+const REASON_MESSAGES: Record<string, string> = {
+  session_expired: 'Your session has expired. Please sign in again.',
+  account_deactivated: 'Your account has been deactivated. Contact support.',
+};
+
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [showPassword, setShowPassword] = useState(false);
+  const reason = searchParams.get('reason');
+  const reasonMessage = reason ? REASON_MESSAGES[reason] : null;
+
+  useEffect(() => {
+    if (reasonMessage) toast.warning(reasonMessage);
+  }, [reasonMessage]);
 
   const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -125,6 +137,12 @@ export default function LoginPage() {
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-[var(--text)] mb-1">Welcome back</h1>
             <p className="text-sm text-[var(--text-secondary)]">Sign in to your Career Copilot account</p>
+            {reasonMessage && (
+              <div className="mt-3 flex items-center gap-2 px-3 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs">
+                <AlertCircle size={13} className="shrink-0" />
+                {reasonMessage}
+              </div>
+            )}
           </div>
 
           <form onSubmit={handleSubmit((d) => mutate(d))} className="space-y-4">
