@@ -2,6 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { randomBytes, timingSafeEqual } from 'crypto';
+import { v2 as cloudinary } from 'cloudinary';
 import rateLimit from 'express-rate-limit';
 import pool, { logAudit } from '../db.js';
 import { auth } from '../middleware/auth.js';
@@ -196,7 +197,6 @@ router.delete('/me', auth, async (req, res) => {
   const { rows: resumes } = await pool.query('SELECT cloudinary_public_id FROM resumes WHERE user_id=$1', [req.user.id]);
   await logAudit(req.user.id, 'DELETE_ACCOUNT', 'user', req.user.id, null, req.ip);
   await pool.query('DELETE FROM users WHERE id = $1', [req.user.id]);
-  const { v2 as cloudinary } = await import('cloudinary');
   for (const r of resumes) { if (r.cloudinary_public_id) cloudinary.uploader.destroy(r.cloudinary_public_id, { resource_type: 'raw' }).catch(() => {}); }
   const isProd = process.env.NODE_ENV === 'production';
   res.clearCookie('token', { sameSite: isProd ? 'none' : 'lax', secure: isProd });
