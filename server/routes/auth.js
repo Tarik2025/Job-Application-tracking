@@ -74,7 +74,8 @@ router.post('/register', async (req, res) => {
     await client.query('COMMIT');
     await logAudit(userId, 'REGISTER', 'user', userId, { email }, req.ip);
     const token = jwt.sign({ id: userId, email: cleanEmail, name: cleanName, tv: token_version }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    res.cookie('token', token, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
+    const isProd = process.env.NODE_ENV === 'production';
+    res.cookie('token', token, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: isProd ? 'none' : 'lax', secure: isProd });
     res.json({ user: { id: userId, email, name } });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -100,7 +101,8 @@ router.post('/login', async (req, res) => {
     if (!user.is_active) return res.status(403).json({ error: 'Account deactivated' });
     await logAudit(user.id, 'LOGIN', 'user', user.id, null, req.ip);
     const token = jwt.sign({ id: user.id, email: user.email, name: user.name, tv: user.token_version }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    res.cookie('token', token, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
+    const isProd = process.env.NODE_ENV === 'production';
+    res.cookie('token', token, { httpOnly: true, maxAge: 7*24*60*60*1000, sameSite: isProd ? 'none' : 'lax', secure: isProd });
     res.json({ user: { id: user.id, email: user.email, name: user.name } });
   } catch (err) { console.error('POST /login:', err); res.status(500).json({ error: 'Internal server error' }); }
 });
@@ -109,7 +111,8 @@ router.post('/login', async (req, res) => {
 router.post('/logout', auth, async (req, res) => {
   await pool.query('UPDATE users SET token_version = token_version + 1 WHERE id = $1', [req.user.id]);
   await logAudit(req.user.id, 'LOGOUT', 'user', req.user.id, null, req.ip);
-  res.clearCookie('token');
+  const isProd = process.env.NODE_ENV === 'production';
+  res.clearCookie('token', { sameSite: isProd ? 'none' : 'lax', secure: isProd });
   res.json({ message: 'Logged out' });
 });
 

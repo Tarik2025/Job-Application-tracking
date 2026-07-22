@@ -9,10 +9,9 @@ const isProd = process.env.NODE_ENV === 'production';
 
 export const { generateCsrfToken, doubleCsrfProtection } = doubleCsrf({
   getSecret: () => process.env.CSRF_SECRET,
-  // v4 requires getSessionIdentifier — use the session cookie or fall back to IP
   getSessionIdentifier: (req) => req.cookies?.token ?? req.ip ?? 'anonymous',
   cookieName: isProd ? '__Host-csrf' : 'csrf',
-  cookieOptions: { httpOnly: true, sameSite: 'strict', secure: isProd },
+  cookieOptions: { httpOnly: true, sameSite: isProd ? 'none' : 'strict', secure: isProd },
   size: 64,
   ignoredMethods: ['GET', 'HEAD', 'OPTIONS'],
 });
