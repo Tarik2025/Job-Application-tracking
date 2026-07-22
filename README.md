@@ -1,613 +1,213 @@
-# 🚀 Career Copilot — AI-Powered Job Application Tracker
+﻿# 🚀 Career Copilot — Complete Developer Guide
 
-A full-stack personal job application tracking system with Gemini AI for email classification, resume matching, interview prep, and intelligent automation.
-
----
-
-## 📋 Table of Contents
-
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Quick Start](#quick-start)
-- [Environment Variables](#environment-variables)
-- [Architecture & Data Flow](#architecture--data-flow)
-- [API Reference](#api-reference)
-- [Email Automation](#email-automation)
-- [AI Services](#ai-services)
-- [Chrome Extension](#chrome-extension)
-- [Admin Panel](#admin-panel)
-- [Deployment](#deployment)
-- [Database Schema](#database-schema)
-- [Future Development Roadmap](#future-development-roadmap)
-- [Contributing](#contributing)
+This README is an authoritative, executable guide to understand, run, and extend the project. It documents architecture, file responsibilities, request/response flows, database schema overview, environment variables, local development, testing, deployment, and migration notes. Follow it to reproduce the entire project from source.
 
 ---
 
-## Features
+## 1. High-level overview
 
-### Core
-- 📋 **Kanban Board** — Drag-and-drop applications across 6 statuses (Applied → Under Review → Interview → Offer → Rejected → Withdrawn)
-- 📊 **Table View** — Sortable, searchable, paginated list with inline editing (status, priority)
-- ➕ **CRUD Operations** — Create, read, update, delete applications with full field support
-- 🏷️ **Tags & Priority** — Organize with custom tags and priority levels (low/medium/high)
+Career Copilot is a full-stack job-application tracking system with three main components:
 
-### AI-Powered
-- 📧 **Email Classification** — Paste or auto-fetch emails → AI categorizes as application_received, interview, rejection, offer, follow_up
-- 📄 **Resume vs JD Matching** — Upload PDF resume → compare against job descriptions → get match score & skill gaps
-- 🎓 **Interview Prep Generator** — AI generates tailored questions, 5-day study plan, and company insights
-- 🔮 **Status Prediction** — AI predicts if application is active, cold, or likely rejected based on days elapsed
-- 📝 **Follow-up Email Generator** — AI drafts professional follow-up emails for each application
+- server/ — Express 5 REST API (Node.js). Handles auth, application CRUD, email automation, resume parsing, AI wrappers, admin, and scheduler.
+- client/ — Next.js 15 (App Router), React 19 UI. Public pages, auth flows, dashboard, admin UI, and integrations (resume upload, email view).
+- extension/ — Chrome Manifest V3 extension to scrape job listings and POST to server extension endpoint.
 
-### Automation
-- 🤖 **Auto Email Fetch** — Connects to Gmail/Outlook via IMAP, fetches every 30 minutes
-- 🔄 **Auto Application Updates** — Classifies emails and automatically updates application status
-- 📨 **Auto Application Creation** — Creates new applications from job-related emails
-- 📜 **Status History** — Every status change is logged with timestamps
-
-### Analytics & Intelligence
-- 📈 **Dashboard Analytics** — Response rates, interview rates, offer rates, monthly trends
-- 🏢 **Company Analytics** — Per-company performance (response time, success rate)
-- 💰 **Salary Insights** — Expected vs offered salary tracking
-- 📊 **Skills Gap Analysis** — Identifies in-demand skills from your job descriptions
-- 🔥 **Streak Tracking** — Daily application streak with longest streak record
-
-### Organization
-- 🔔 **Reminders** — Set reminders with auto-created 7-day follow-up on new applications
-- 📅 **Interview Calendar** — Schedule interviews, track rounds, record outcomes
-- 🚫 **Company Blacklist** — Auto-suggests ghosting companies (30+ days no response)
-- 🎯 **Goals** — Set daily/weekly/monthly application targets with progress tracking
-- 📜 **Activity Feed** — Complete timeline of all actions
-
-### Admin
-- 👑 **Admin Panel** — Separate admin login with secret key authentication
-- 👥 **User Management** — CRUD users, activate/deactivate, view all applications
-- 📋 **Global Application View** — See and manage all users' applications
-- 📊 **Platform Statistics** — Total users, applications, emails, resumes
-
-### Extension
-- 🧩 **Chrome Extension** — Scrape job listings from LinkedIn, Naukri, Glassdoor directly into the tracker
+Primary runtime: server exposes `/api/*` endpoints consumed by client and extension.
 
 ---
 
-## Tech Stack
+## 2. Architecture diagram (mermaid)
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **Frontend** | Next.js 15, React 19 | App Router, SSR, client components |
-| **Styling** | Tailwind CSS 4, CSS Variables | Theming (dark/light), responsive design |
-| **Animations** | Framer Motion | Page transitions, layout animations |
-| **Icons** | Lucide React | UI icons |
-| **Backend** | Express 5, Node.js | REST API server |
-| **Database** | better-sqlite3 (SQLite) | Embedded database, WAL mode |
-| **AI** | Google Gemini 2.0 Flash | Email classification, resume matching, interview prep |
-| **Email** | nodemailer (SMTP), imap (IMAP) | Send reset emails, fetch inbox |
-| **Auth** | JWT, bcryptjs | Token-based auth with httpOnly cookies |
-| **PDF** | pdf-parse | Resume text extraction |
-| **Scheduling** | node-cron | Auto email fetch every 30 min |
-| **Extension** | Chrome Manifest V3 | Job scraping from portals |
-| **Deploy** | Vercel (frontend), Railway (backend) | Production hosting |
-
----
-
-## Project Structure
-
-```
-Career-Copilot/
-├── client/                     # Next.js 15 Frontend
-│   ├── src/
-│   │   ├── app/                # App Router pages
-│   │   │   ├── page.js        # Landing page
-│   │   │   ├── login/         # Login page
-│   │   │   ├── signup/        # Multi-step registration (4 steps)
-│   │   │   ├── dashboard/     # Main dashboard (all features)
-│   │   │   ├── profile/       # User profile management
-│   │   │   ├── admin/         # Standalone admin page
-│   │   │   ├── forgot-password/
-│   │   │   ├── layout.js      # Root layout with theme provider
-│   │   │   └── globals.css    # CSS variables, utility classes
-│   │   ├── components/
-│   │   │   ├── ui/index.js    # Reusable UI components (Button, Modal, Input, etc.)
-│   │   │   ├── KanbanBoard.js # Kanban + Table view with CRUD
-│   │   │   ├── AddApplication.js # New application form
-│   │   │   ├── EmailClassifier.js # Email accounts, fetch, classify
-│   │   │   ├── ResumeMatch.js # Resume upload & JD matching
-│   │   │   ├── InterviewPrep.js # AI interview prep generator
-│   │   │   ├── InterviewCalendar.js # Schedule & track interviews
-│   │   │   ├── Analytics.js   # Charts, stats, company analysis
-│   │   │   ├── StreakGoals.js # Streak, goals, blacklist, skills gap
-│   │   │   ├── Reminders.js   # Reminder management
-│   │   │   ├── ActivityFeed.js # Activity timeline
-│   │   │   └── AdminPanel.js  # Admin with login gate
-│   │   └── lib/
-│   │       ├── api.js         # All API calls (single source of truth)
-│   │       └── theme.js       # Dark/light theme provider
-│   ├── package.json
-│   ├── next.config.mjs        # API rewrites to backend
-│   ├── postcss.config.mjs
-│   └── jsconfig.json          # Path aliases (@/components, @/lib)
-│
-├── server/                     # Express 5 Backend
-│   ├── index.js               # Server entry point, middleware, routes
-│   ├── db.js                  # SQLite schema, migrations, seed data
-│   ├── middleware/
-│   │   └── auth.js            # JWT authentication middleware
-│   ├── routes/
-│   │   ├── auth.js            # Register, login, logout, password reset
-│   │   ├── applications.js    # CRUD, bulk ops, tags, reminders, AI predict
-│   │   ├── emails.js          # Email accounts, fetch, classify
-│   │   ├── resume.js          # Upload, parse PDF, match vs JD
-│   │   ├── interview.js       # Generate interview prep
-│   │   ├── analytics.js       # Dashboard stats, company analytics
-│   │   ├── advanced.js        # Streak, goals, blacklist, interviews, docs
-│   │   ├── admin.js           # Admin CRUD with separate auth
-│   │   ├── colleges.js        # College search/add
-│   │   ├── stacks.js          # Tech stack management
-│   │   └── search.js          # Global search
-│   ├── services/
-│   │   ├── gemini.js          # AI wrapper (Gemini API + manual fallback)
-│   │   ├── manual.js          # Rule-based fallback (no AI needed)
-│   │   ├── emailFetcher.js    # IMAP email fetching & auto-classification
-│   │   ├── scheduler.js       # Cron job for auto email fetch
-│   │   └── mail.js            # SMTP email sender (nodemailer)
-│   ├── utils/
-│   │   └── pagination.js      # Pagination & sort helpers
-│   ├── uploads/               # Uploaded resume files
-│   ├── .env                   # Environment variables (not in git)
-│   └── package.json
-│
-├── extension/                  # Chrome Extension (Manifest V3)
-│   ├── manifest.json
-│   ├── content.js             # Scrapes job details from portals
-│   ├── popup.html             # Extension popup UI
-│   └── popup.js               # Popup logic
-│
-├── .gitignore
-├── package.json               # Root package.json
-├── railway.toml               # Railway deployment config
-└── README.md
+```mermaid
+flowchart LR
+  subgraph Frontend
+    C[Next.js client]
+  end
+  subgraph Backend
+    S[Express server]
+    DB[SQLite / Postgres]
+    Scheduler[node-cron]
+    AI[Gemini adapter]
+  end
+  EXT[Chrome extension]
+  C -->|API calls| S
+  EXT -->|POST /api/extension/job (auth)| S
+  S --> DB
+  Scheduler --> S
+  S --> AI
+  S -->|send email| SMTP[nodemailer]
+  S -->|fetch email via IMAP| IMAP
 ```
 
 ---
 
-## Quick Start
+## 3. File & folder responsibilities (detailed)
 
-### Prerequisites
-- Node.js 18+
-- npm or yarn
-- Google Gemini API key (free at https://aistudio.google.com/apikey)
+- server/
+  - index.js — app bootstrap: env validation, middleware, route wiring, scheduler start, health endpoint.
+  - db.js — central DB bootstrap: creates SQLite schema, runs migrations, seeds initial data. When migrating to Postgres, replace or augment this file with a pg adapter or wrapper.
+  - routes/ — express routers grouped by concern:
+    - auth.js — register/login/logout/password flows. Issues JWT cookie. Uses bcryptjs for hashing.
+    - applications.js — application CRUD, duplicate checks, status history, exports.
+    - emails.js — IMAP account CRUD, manual classify endpoint, fetch endpoint.
+    - resume.js — multer upload, pdf-parse extraction, store file_path in resumes table.
+    - admin.js — admin-only routes; requires ADMIN_* env vars; issues admin_token cookie.
+    - others: colleges.js, stacks.js, analytics.js, interview.js, advanced.js, search.js
+  - services/
+    - gemini.js — AI wrapper (calls Google Gemini if GEMINI_API_KEY present; otherwise fallback)
+    - manual.js — deterministic rules for email classification and lightweight NLP fallback.
+    - emailFetcher.js — IMAP polling client + parsing + deduplication and classification pipeline.
+    - scheduler.js — node-cron scheduling that triggers emailFetcher and periodic jobs.
+    - mail.js — SMTP sending (nodemailer) and templates.
+  - middleware/
+    - auth.js — verifies JWT cookie and attaches req.user
+    - csrf.js — CSRF token generation and double-submit protection utilities
+  - uploads/ — resume uploads (ensure proper file perms in production)
+  - migrate_sqlite_to_pg.js — data migration helper (SQLite -> Postgres). Use server/MIGRATION_TO_POSTGRES.md to run.
 
-### 1. Clone & Install
+- client/
+  - src/app/ — Next.js App Router pages and layouts (login, signup, dashboard, admin, profile, forgot-password)
+  - src/components/ — UI components (Kanban, tables, forms, resume match, email classifier, interview prep)
+  - src/lib/api.js — central API client wrappers used across UI; prefer this for network calls.
+  - next.config.mjs — rewrites to backend for local development
 
-```bash
-git clone https://github.com/Tarik2025/Job-Application-tracking.git
-cd Job-Application-tracking
-
-# Install server dependencies
-cd server && npm install
-
-# Install client dependencies
-cd ../client && npm install
-```
-
-### 2. Configure Environment
-
-Create `server/.env`:
-
-```env
-PORT=3001
-JWT_SECRET=your-random-secret-key-here
-GEMINI_API_KEY=your-gemini-api-key
-FRONTEND_URL=http://localhost:3000
-
-# Gmail SMTP (for password reset emails)
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASS=your-16-char-app-password
-
-# Admin Panel
-ADMIN_EMAIL=your-admin-email@example.com
-ADMIN_PASSWORD=your-secure-admin-password
-ADMIN_SECRET=your-secret-key
-```
-
-### 3. Run
-
-```bash
-# Terminal 1 — Backend (port 3001)
-cd server && npm run dev
-
-# Terminal 2 — Frontend (port 3000)
-cd client && npm run dev
-```
-
-### 4. First Use
-1. Open http://localhost:3000
-2. Register your first account → automatically becomes admin
-3. Go to Email AI → Connect your Gmail with app password for automation
+- extension/ — Chrome extension that posts to `/api/extension/job` with auth cookie and CSRF token.
 
 ---
 
-## Environment Variables
+## 4. Data model highlights
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `PORT` | Backend server port | Yes (default: 3001) |
-| `JWT_SECRET` | Secret for JWT token signing | Yes |
-| `GEMINI_API_KEY` | Google Gemini API key for AI features | Yes (fallback: manual rules) |
-| `FRONTEND_URL` | Frontend URL for CORS & email links | Yes |
-| `SMTP_HOST` | SMTP server for sending emails | Optional |
-| `SMTP_PORT` | SMTP port (587 for Gmail) | Optional |
-| `SMTP_USER` | Email address for sending | Optional |
-| `SMTP_PASS` | Gmail 16-char app password | Optional |
-| `ADMIN_EMAIL` | Admin login email | Yes |
-| `ADMIN_PASSWORD` | Admin login password | Yes |
-| `ADMIN_SECRET` | Admin secret key (extra auth layer) | Yes |
+Core tables (see server/db.js for full schema):
+- users (id, email, password, name, token_version, is_active, created_at)
+- applications (id, user_id, company, role, status, platform, job_url, applied_date)
+- status_history (application_id, from_status, to_status, note)
+- emails (id, user_id, application_id, subject, from_address, body, classification, received_at)
+- resumes (id, user_id, filename, file_path, extracted_text)
+- reminders, interviews, tags, user_stacks, goals, activity_feed, audit_log
 
-**Getting Gmail App Password:**
-1. Enable 2FA at https://myaccount.google.com/security
-2. Go to https://myaccount.google.com/apppasswords
-3. Create app password → use in `SMTP_PASS`
+Indices: db.js creates indexes on user_id, applied_date and other high-cardinality columns for performance.
 
 ---
 
-## Architecture & Data Flow
+## 5. Request & flow examples (end-to-end)
 
-### Authentication Flow
-```
-User → POST /auth/register → bcrypt hash → SQLite → JWT cookie → Dashboard
-User → POST /auth/login → verify password → JWT cookie (7 day expiry)
-Admin → POST /admin/login → email + password + secret_key → admin_token cookie
-```
+1. Registration + login
+   - POST /api/auth/register { email, password, name, stacks? }
+     - Validates input, hashes password with bcrypt, inserts into users.
+     - Issues JWT cookie `token` with user id and token_version.
+   - POST /api/auth/login { email, password }
+     - Verifies password, issues JWT cookie.
 
-### Email Automation Flow
-```
-1. User connects email account (IMAP credentials stored in DB)
-2. Scheduler runs every 30 minutes (node-cron)
-3. IMAP fetches last 7 days of emails (max 50)
-4. Filter: only job-related keywords pass
-5. Dedup: skip if subject+date already processed
-6. Classify: Gemini AI (or manual fallback) extracts company, role, status
-7. Match: find existing application by company name
-8. Update: change application status + log history
-9. Or Create: new application if no match found
-```
+2. Create application (client)
+   - Client POST /api/applications { company, role, job_url, platform }
+   - Server duplicate-checks for user by company+role; inserts into applications + status_history; returns new app id.
 
-### AI Classification Logic
-```
-Priority: Gemini AI → Manual keyword rules (always works offline)
+3. Upload resume
+   - Client multipart/form-data POST /api/resumes/upload with file; server uses multer to store a hashed filename under server/uploads and persists file_path in resumes table; pdf-parse extracts text stored in extracted_text.
 
-Manual rules detect:
-- "offer letter", "pleased to offer" → offer
-- "interview", "schedule", "round" → interview_invitation
-- "regret", "unfortunately", "not moving forward" → rejection
-- "in queue", "thank you for applying", "shortlisted" → application_received
-- "follow up", "checking in" → follow_up
-```
+4. Email automation
+   - User adds IMAP account: POST /api/emails/accounts { host, port, email, password }
+   - Scheduler runs every 30 minutes (server/services/scheduler.js) and calls emailFetcher which:
+     - Connects via IMAP, fetches recent messages, deduplicates via imap_uid or subject+date
+     - Classifies each message via gemini.js → manual.js fallback
+     - Updates matching application or creates a new application and logs status_history
 
-### Frontend Routing
-```
-/              → Landing page (public)
-/login         → Login
-/signup        → 4-step registration
-/dashboard     → Main app (all tabs via sidebar)
-/profile       → User profile
-/forgot-password → Password reset
-/admin         → Standalone admin page
-```
+5. Chrome extension
+   - Extension obtains CSRF token via GET /api/csrf-token, includes cookie + CSRF on POST /api/extension/job
+   - Server validates, runs duplicate-checks, inserts application + status_history + reminder
 
 ---
 
-## API Reference
+## 6. Environment variables (full)
 
-### Auth (`/api/auth`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/register` | Create account (first user = admin) |
-| POST | `/login` | Login with email/password |
-| POST | `/logout` | Clear auth cookie |
-| GET | `/me` | Get current user profile |
-| PUT | `/me` | Update profile |
-| DELETE | `/me` | Delete account (requires password) |
-| PUT | `/change-password` | Change password |
-| POST | `/forgot-password` | Send reset email |
-| POST | `/reset-password` | Reset with token |
+Required for server startup (server will exit if missing/weak):
+- JWT_SECRET (string, 32+ chars) — JWT signing
+- ENCRYPTION_KEY (32+ chars) — symmetric key for internal encryption
+- CSRF_SECRET (32+ chars) — used by double CSRF middleware
+- ADMIN_EMAIL — admin console email
+- ADMIN_PASSWORD_HASH — bcrypt hash of admin password (avoid storing plaintext)
+- ADMIN_SECRET — admin extra secret key
 
-### Applications (`/api/applications`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | List (paginated, filtered, sorted) |
-| GET | `/:id` | Get single with history, tags, reminders |
-| POST | `/` | Create (duplicate check included) |
-| PUT | `/:id` | Update (status history auto-logged) |
-| DELETE | `/:id` | Delete |
-| PATCH | `/bulk/status` | Bulk status update |
-| POST | `/bulk/delete` | Bulk delete |
-| GET | `/:id/predict` | AI status prediction |
-| GET | `/:id/follow-up` | AI follow-up email |
-| GET | `/export` | Export as CSV |
-| GET | `/report/weekly` | Weekly report stats |
-| GET | `/companies/stats` | Per-company analytics |
+Optional but enable features:
+- FRONTEND_URL — frontend origin for CORS
+- SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS — to send password reset emails
+- GEMINI_API_KEY — to enable AI features (email classification, resume matching)
+- DATABASE_URL — if set, instructs the app to use Postgres (see migration notes)
 
-**Query params for GET /:**
-- `page`, `limit` — pagination
-- `sort_by`, `sort_order` — sorting
-- `status`, `company`, `platform`, `priority`, `work_mode` — filters
-- `search` — full-text search (company, role, location, notes)
-- `tag` — filter by tag name
-- `days_min`, `days_max` — filter by days since applied
-
-### Emails (`/api/emails`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | List classified emails |
-| POST | `/classify` | Manual classify (auto-creates/updates app) |
-| GET | `/accounts` | List connected accounts |
-| POST | `/accounts` | Connect email account |
-| DELETE | `/accounts/:id` | Remove account |
-| POST | `/fetch` | Trigger manual fetch |
-
-### Resume (`/api/resumes`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | List uploaded resumes |
-| POST | `/upload` | Upload PDF resume |
-| POST | `/match` | Match resume vs JD |
-
-### Interview (`/api/interview`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Interview prep history |
-| POST | `/generate` | Generate prep plan |
-
-### Analytics (`/api/analytics`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Full analytics dashboard |
-| GET | `/companies` | Company-level analytics |
-| GET | `/timeline` | Application timeline |
-
-### Advanced (`/api/advanced`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/streak` | Current & longest streak |
-| GET/POST/DELETE | `/goals` | CRUD goals |
-| GET/POST/DELETE | `/blacklist` | Company blacklist |
-| GET | `/blacklist/suggest` | Auto-suggest ghosted companies |
-| GET/POST/PUT | `/interviews` | Interview scheduling |
-| GET/POST/DELETE | `/documents` | Document management |
-| GET | `/activity` | Activity feed (paginated) |
-| GET | `/salary` | Salary insights |
-| GET | `/skills-gap` | Skills demand analysis |
-
-### Admin (`/api/admin`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/login` | Admin login (email + password + secret_key) |
-| GET | `/stats` | Platform overview stats |
-| GET/POST/PUT/DELETE | `/users` | User CRUD |
-| PATCH | `/users/:id/toggle` | Activate/deactivate user |
-| GET/PUT/DELETE | `/applications` | All applications |
-| GET | `/audit` | Audit log |
-| GET | `/emails` | All emails |
-| GET | `/search` | Global search |
+Security: Set these in your host/prod env (Render, Railway, Vercel, or your Kubernetes secrets). Do not commit them.
 
 ---
 
-## Email Automation
+## 7. Local development (step-by-step)
 
-### How It Works
-1. User connects Gmail via **App Password** (not regular password)
-2. System stores IMAP credentials in `email_accounts` table
-3. `node-cron` scheduler runs `fetchAllAccounts()` every 30 minutes
-4. For each account: connects via IMAP → fetches last 7 days → max 50 emails
-5. Filters using job-related keywords (application, interview, offer, reject, etc.)
-6. Deduplicates by subject + date
-7. Classifies using Gemini AI (falls back to keyword matching)
-8. Auto-creates or updates applications based on classification
-
-### Manual Classification
-Users can also paste email content directly → same classification pipeline → auto-creates/updates applications.
-
-### Supported Providers
-- Gmail (imap.gmail.com)
-- Outlook (imap-mail.outlook.com)
-- Yahoo (imap.yahoo.com)
-
----
-
-## AI Services
-
-### Gemini AI (Primary)
-- Model: `gemini-2.0-flash`
-- Used for: email classification, resume matching, interview prep, status prediction, follow-up generation
-- Falls back to manual rules if API fails or key not provided
-
-### Manual Fallback (Always Available)
-Located in `server/services/manual.js`:
-- **Email Classification** — Keyword-based pattern matching with confidence scoring
-- **Resume Matching** — Skill taxonomy matching (200+ skills), experience extraction, education detection
-- **Interview Prep** — Role-specific questions (frontend, backend, fullstack, data, devops)
-- **Status Prediction** — Time-based heuristics (5d = active, 14d = active, 28d = cold, 30d+ = likely rejected)
-- **Follow-up Generator** — Template-based professional emails
-
-### Skill Taxonomy
-The system recognizes 200+ skills across categories:
-- Languages, Frontend, Backend, Database, Cloud, DevOps, Mobile, AI/ML, Tools, Concepts
-
----
-
-## Chrome Extension
-
-### Setup
-1. Open `chrome://extensions`
-2. Enable "Developer mode"
-3. Click "Load unpacked" → select the `extension/` folder
-4. Navigate to a job listing on LinkedIn/Naukri/Glassdoor
-
-### Usage
-1. Click the extension icon on a job page
-2. It extracts: company, role, platform, job URL, description, location
-3. Click "Save" → creates application in your tracker
-4. Requires: Login token (set in extension settings)
-
-### Supported Portals
-- LinkedIn Jobs
-- Naukri.com
-- Glassdoor
-
----
-
-## Admin Panel
-
-### Access
-Admin credentials are stored in environment variables (not in code):
-- `ADMIN_EMAIL` — Your admin email
-- `ADMIN_PASSWORD` — Your admin password
-- `ADMIN_SECRET` — Secret key for extra security
-
-Set these in `server/.env` (never commit this file).
-
-### Features
-- Platform statistics (users, apps, emails, resumes)
-- User management (create, edit, activate/deactivate, delete)
-- Application oversight (view all, change status, delete)
-- Audit log (all actions tracked)
-- Global search across users, applications, emails
-
----
-
-## Deployment
-
-### Backend → Railway
-
-1. Push code to GitHub
-2. Go to https://railway.app → New Project → Deploy from GitHub
-3. Set root directory to `/server`
-4. Add environment variables: `JWT_SECRET`, `GEMINI_API_KEY`, `FRONTEND_URL`, `SMTP_*`
-5. Deploy — Railway auto-detects Node.js
-
-`railway.toml` is already configured.
-
-### Frontend → Vercel
-
-1. Go to https://vercel.com → Import from GitHub
-2. Set root directory to `client`
-3. Framework: Next.js (auto-detected)
-4. Update `client/next.config.mjs` rewrite destination to Railway URL:
-   ```js
-   rewrites: () => [{ source: '/api/:path*', destination: 'https://your-railway-url.up.railway.app/api/:path*' }]
+1. Install deps (root helper):
+   ```bash
+   npm run install:all
    ```
-5. Deploy
+2. Create server/.env with required vars (use dummy values for local development, but keep length constraints):
+   ```env
+   PORT=3001
+   JWT_SECRET=32_char_minimum_random_string
+   ENCRYPTION_KEY=32_char_minimum_random_string
+   CSRF_SECRET=32_char_minimum_random_string
+   FRONTEND_URL=http://localhost:3000
+   ADMIN_EMAIL=admin@example.com
+   ADMIN_PASSWORD_HASH=<bcrypt-hash>
+   ADMIN_SECRET=admin-secret
+   ```
+3. Start server and client in separate shells:
+   - `cd server && npm run dev`
+   - `cd client && npm run dev`
+4. Open frontend (Next) — if Next uses a different port, follow the console log.
+5. Quick smoke:
+   - GET http://localhost:3001/api/health
+   - GET http://localhost:3001/api/colleges
+   - GET http://localhost:3001/api/stacks
 
 ---
 
-## Database Schema
+## 8. Database migration to Postgres (short)
 
-### Core Tables
-| Table | Purpose |
-|-------|---------|
-| `users` | User accounts with full profile |
-| `applications` | Job applications (company, role, status, etc.) |
-| `status_history` | Every status change logged |
-| `emails` | Classified emails |
-| `email_accounts` | Connected IMAP accounts |
-| `resumes` | Uploaded resume data |
-| `interview_prep` | Generated prep plans |
+1. Backup server/career-copilot.db
+2. Create target Postgres DB and user
+3. Use server/migrate_sqlite_to_pg.js as described in server/MIGRATION_TO_POSTGRES.md
+4. After data migration, update server/db.js to use Postgres (I can add a compatibility wrapper)
 
-### Organization Tables
-| Table | Purpose |
-|-------|---------|
-| `tags` | Custom user tags |
-| `application_tags` | Many-to-many tag assignments |
-| `notes_history` | Notes per application |
-| `reminders` | Scheduled reminders |
-| `interviews` | Interview schedule & outcomes |
-| `documents` | Cover letters, offer letters, etc. |
-
-### Intelligence Tables
-| Table | Purpose |
-|-------|---------|
-| `blacklist` | Blocked companies |
-| `goals` | Application goals (daily/weekly/monthly) |
-| `activity_feed` | All user actions timeline |
-| `audit_log` | System-wide audit trail |
-
-### Reference Tables
-| Table | Purpose |
-|-------|---------|
-| `colleges` | Searchable college list (auto-grows) |
-| `stacks` | Tech stack options |
-| `user_stacks` | User-stack associations |
-| `follow_ups` | Scheduled follow-up messages |
+Note: Data migration script only copies data; you must change db layer in the app to use pg.
 
 ---
 
-## Future Development Roadmap
+## 9. Tests & E2E
 
-### High Priority
-- [ ] **Real-time notifications** — WebSocket push when email auto-classifies
-- [ ] **Multi-resume support** — Switch between resumes for different roles
-- [ ] **Application timeline visualization** — Visual journey per application
-- [ ] **Email templates** — Custom templates for follow-ups, thank-you notes
-- [ ] **Mobile responsive** — Optimize for mobile views
-- [ ] **Bulk import** — Import applications from CSV/Excel
-
-### Medium Priority
-- [ ] **OAuth for email** — Google OAuth instead of app passwords (more secure)
-- [ ] **Collaborative features** — Share applications with mentors/friends
-- [ ] **AI cover letter generator** — Generate cover letters from resume + JD
-- [ ] **Company research** — Auto-fetch Glassdoor reviews, tech blog links
-- [ ] **Networking tracker** — Track referrals, contacts, coffee chats
-- [ ] **Application scoring** — AI rates your fit before you apply
-- [ ] **Dashboard widgets** — Customizable dashboard layout
-- [ ] **Dark/light per-component** — More theme customization
-
-### Low Priority / Nice-to-Have
-- [ ] **Browser notifications** — Desktop push for reminders
-- [ ] **Telegram/Discord bot** — Get updates via messaging
-- [ ] **AI mock interviews** — Practice with AI interviewer
-- [ ] **Resume builder** — Build ATS-friendly resumes in-app
-- [ ] **Job recommendation engine** — Suggest jobs based on profile
-- [ ] **Offer comparison tool** — Side-by-side offer analysis
-- [ ] **Calendar integration** — Google Calendar / Outlook sync for interviews
-- [ ] **Multi-language support** — i18n
-- [ ] **PWA support** — Installable as mobile app
-- [ ] **GraphQL API** — Alternative to REST for flexible queries
-
-### Infrastructure
-- [ ] **PostgreSQL migration** — For production scalability
-- [ ] **Redis caching** — Cache analytics, reduce DB load
-- [ ] **Rate limiting** — Protect API from abuse
-- [ ] **E2E tests** — Playwright/Cypress test suite
-- [ ] **CI/CD pipeline** — GitHub Actions for lint, test, deploy
-- [ ] **Docker support** — Containerized deployment
-- [ ] **API versioning** — v1/v2 support for breaking changes
-- [ ] **Monitoring** — Error tracking (Sentry), uptime monitoring
+- There are no committed E2E tests. Recommended additions:
+  - Playwright/Cypress scenario: register→login→create application→upload resume→connect IMAP (or mock)→simulate email classification.
+  - Unit tests for services/manual.js rules and for db migrations.
 
 ---
 
-## Contributing
+## 10. Deployment recommendations
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Commit changes: `git commit -m "Add your feature"`
-4. Push: `git push origin feature/your-feature`
-5. Open a Pull Request
-
-### Code Style
-- Frontend: React functional components, hooks only
-- Backend: ES modules (import/export), async/await
-- CSS: Tailwind utility classes + CSS variables for theming
-- Naming: camelCase for JS, kebab-case for CSS classes
+- Frontend: Vercel (Next-first). Configure rewrites to backend or use FRONTEND_URL to point to deployed backend.
+- Backend: Railway / Render / self-hosted. Ensure environment variables are set and DATABASE_URL is configured for Postgres in production.
+- File uploads: store resumes in a durable store (S3 or equivalent) and save file paths/URLs in DB. The current uploads/ folder is fine for single-instance deployments but not for horizontally scaled servers.
 
 ---
 
-## License
+## 11. Troubleshooting
 
-MIT — free to use, modify, and distribute.
+- Server exits with missing env var error: ensure JWT_SECRET, ENCRYPTION_KEY, CSRF_SECRET are set and long enough.
+- Email features disabled: server logs if SMTP not configured.
+- Admin routes refuse to start: check ADMIN_EMAIL, ADMIN_SECRET, ADMIN_PASSWORD_HASH.
+- IMAP fetch fails: confirm IMAP credentials and allowlist server IP in provider (some providers block unknown hosts).
 
 ---
 
-Built with ❤️ by [Tarik2025](https://github.com/Tarik2025)
+## 12. Next actions I can take for you (pick one)
+
+- Add a Postgres adapter in server/db.js (compatibility layer) and commit it so the app can switch to Postgres with DATABASE_URL.
+- Add a Playwright E2E test suite and a CI job to run it.
+- Implement S3-backed resume storage and update resume.js to remove local disk reliance.
+
+---
+
+If this guide is missing any section you want expanded (detailed API examples, cURL snippets, or full file-level flow charts), tell me which piece and I will add it.
