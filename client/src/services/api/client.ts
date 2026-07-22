@@ -105,7 +105,7 @@ client.interceptors.request.use(
     const method = config.method?.toLowerCase() ?? '';
 
     if (CSRF_METHODS.has(method)) {
-      // Skip CSRF for multipart uploads — multer handles those separately
+      // Skip CSRF for multipart uploads — token is added manually in upload()
       const isMultipart = config.headers['Content-Type']
         ?.toString()
         .includes('multipart/form-data');
@@ -327,8 +327,12 @@ export async function upload<T>(
   formData: FormData,
   onProgress?: (percent: number) => void,
 ): Promise<T> {
+  const token = await getOrFetchCsrfToken().catch(() => null);
   const response = await client.post<T>(url, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
+    headers: {
+      'Content-Type': 'multipart/form-data',
+      ...(token ? { 'x-csrf-token': token } : {}),
+    },
     onUploadProgress: (event) => {
       if (onProgress && event.total) {
         onProgress(Math.round((event.loaded * 100) / event.total));
