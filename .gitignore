@@ -9,3 +9,7 @@ server.log
 *.txt
 
 !README.md
+
+# Terraform
+terraform/terraform.tfvars
+terraform/*.tfstate*

@@ -10,7 +10,19 @@ client:
   port: 3000
   resources: {}
 
+persistence:
+  enabled: false
+  storageClass: "local-path"
+  size: "1Gi"
+  mountPath: "/app/data"
+
+certManager:
+  enabled: false
+  email: "admin@example.com"
+  issuer: "letsencrypt-prod"
+
 ingress:
   enabled: false
   host: example.com
-  tls: false
+  certManagerAnnotations: false
+  ingressClass: "traefik"

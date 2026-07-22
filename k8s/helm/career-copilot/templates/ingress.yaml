@@ -3,7 +3,12 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: career-copilot-ingress
+  annotations:
+    {{- if .Values.ingress.certManagerAnnotations }}
+    cert-manager.io/cluster-issuer: {{ .Values.certManager.issuer | quote }}
+    {{- end }}
 spec:
+  ingressClassName: {{ .Values.ingress.ingressClass }}
   rules:
     - host: {{ .Values.ingress.host }}
       http:
@@ -15,7 +20,7 @@ spec:
                 name: career-copilot-client
                 port:
                   number: 80
-  {{- if .Values.ingress.tls }}
+  {{- if .Values.ingress.certManagerAnnotations }}
   tls:
     - hosts:
         - {{ .Values.ingress.host }}
